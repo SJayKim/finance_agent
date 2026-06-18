@@ -1,2 +1,11 @@
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Python / uv
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.env

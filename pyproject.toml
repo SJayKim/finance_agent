@@ -1,0 +1,33 @@
+[project]
+name = "finance-agent"
+version = "0.1.0"
+description = "애널리스트 리서치 가속기 — Stage 1 증거 브리프 대시보드"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "pgvector",
+    "psycopg[binary]",
+    "pydantic-settings",
+    "httpx",
+    "anthropic",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
