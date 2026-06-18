@@ -65,11 +65,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
 ## Commands
-<!-- 스택 미정 — 결정 후 채울 것. watch 모드 금지 -->
-- Build: `<TBD>`
-- Test: `<TBD>`
-- Lint: `<TBD>`
-- Typecheck: `<TBD>`
+<!-- 스택: Python 3.12 + FastAPI (uv). 근거: docs/STAGE1_DESIGN.md §4. watch 모드 금지 -->
+- Install: `uv sync`
+- Run: `uv run uvicorn app.main:app`   (--reload 등 watch 모드 금지)
+- Test: `uv run pytest`
+- Lint: `uv run ruff check .`   (포맷: `uv run ruff format .`)
+- Typecheck: `uv run mypy .`
 
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
