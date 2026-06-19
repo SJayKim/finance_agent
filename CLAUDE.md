@@ -75,6 +75,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
 - configparser가 읽는 설정 파일(`alembic.ini`, `*.ini`, `*.cfg`)에는 비-ASCII(한글 주석 등) 금지. Windows 로케일 코덱(cp949)으로 읽혀 `UnicodeDecodeError`로 alembic이 로드 실패한다. 비-ASCII 주석은 UTF-8로 읽히는 `.py`에만 둘 것. (2026-06-19, alembic.ini)
+- 런타임 Python HTTP 클라이언트(httpx/requests)로 외부 HTTPS 요청 시 `truststore`로 OS 인증서 저장소를 신뢰시킬 것(사내 TLS 가로채기 → `CERTIFICATE_VERIFY_FAILED`). 스코프 좁게: `ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` → `httpx.Client(verify=ctx)`. (2026-06-19, app/collector/rss.py fetch)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
