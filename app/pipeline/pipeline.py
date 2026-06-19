@@ -4,19 +4,22 @@ normalize → dedup(SimHash→임베딩 cosine) → cluster → ticker-link(Open
 → event-classify → 영향도 생성(2-패스 Citations, §7).
 
 단계 간 상태는 DB로 흐른다(§3·§8: Postgres가 단일 상태 저장소). run_pipeline은
-구현된 단계만 명시 호출하고, 나머지는 구현될 때 한 줄씩 추가한다. 현재: dedup 1차까지.
+구현된 단계만 명시 호출하고, 나머지는 구현될 때 한 줄씩 추가한다.
+현재: dedup → 영향도 골격(brief_items) → ticker-link 배선까지.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import Cluster, ClusterMember, RawDocument
+from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
 from app.pipeline.dedup import near_duplicate_groups
+from app.pipeline.ticker_link import openfigi_normalizer, resolve
 
 
 def normalize() -> None:
@@ -56,24 +59,91 @@ def cluster() -> None:
     raise NotImplementedError
 
 
-def ticker_link() -> None:
-    raise NotImplementedError
+def _brief_items_without_tickers(session: Session, brief_date: date) -> list[BriefItem]:
+    """이 brief_date의 brief_item 중 아직 티커가 안 붙은 것 (멱등 재실행 대비)."""
+    linked = select(BriefItemTicker.brief_item_id)
+    rows = session.execute(
+        select(BriefItem).where(BriefItem.brief_date == brief_date, BriefItem.id.not_in(linked))
+    ).scalars()
+    return list(rows)
+
+
+def _representative_title(session: Session, cluster_id: int) -> str | None:
+    return session.execute(
+        select(RawDocument.title)
+        .join(Cluster, Cluster.representative_doc_id == RawDocument.id)
+        .where(Cluster.id == cluster_id)
+    ).scalar_one_or_none()
+
+
+def ticker_link(
+    session: Session,
+    brief_date: date,
+    dictionary: Mapping[str, list[tuple[str, str]]],
+    normalizer: Callable[[str, str], str | None] | None = None,
+) -> None:
+    """ticker-link 배선 (§6.4): brief_item 대표문서 제목 → brief_item_tickers.
+
+    순수 resolve()로 사전 별칭을 찾아 적재한다. link_precision은 §6.4 실측 전이라
+    NULL(게이트 측정은 후속 작업). is_candidate는 resolve의 판단을 그대로 보존.
+    사전이 비면(기본 빈 dict) 아무것도 적재하지 않는다 — 유니버스 하드코딩 금지(§2).
+    """
+    for item in _brief_items_without_tickers(session, brief_date):
+        if item.cluster_id is None:
+            continue
+        title = _representative_title(session, item.cluster_id)
+        if title is None:
+            continue
+        for link in resolve(title, dictionary, normalizer):
+            session.add(
+                BriefItemTicker(
+                    brief_item_id=item.id,
+                    ticker=link.ticker,
+                    market=link.market,
+                    is_candidate=link.is_candidate,
+                )
+            )
 
 
 def event_classify() -> None:
     raise NotImplementedError
 
 
-def generate_impact() -> None:
-    raise NotImplementedError
+def _clusters_without_brief_item(session: Session, brief_date: date) -> list[Cluster]:
+    """이 brief_date의 클러스터 중 아직 brief_item이 없는 것 (멱등 재실행 대비)."""
+    has_item = select(BriefItem.cluster_id).where(BriefItem.cluster_id.is_not(None))
+    rows = session.execute(
+        select(Cluster).where(Cluster.brief_date == brief_date, Cluster.id.not_in(has_item))
+    ).scalars()
+    return list(rows)
 
 
-def run_pipeline(brief_date: date) -> None:
-    """일간 브리프 파이프라인 1회 실행. 현재 구현: dedup 1차까지.
+def generate_impact(session: Session, brief_date: date) -> None:
+    """영향도 생성 골격 (§6.6/§7): 클러스터 → brief_items.
 
-    이후 단계는 구현되는 대로 이 함수에 순서대로 추가한다(§6):
-    cluster → ticker_link → event_classify → generate_impact.
+    §7 2-패스 Citations 분석은 미구현이라 event_type·direction·confidence·
+    analysis_text는 NULL로 두고 status=empty로 정직하게 표기한다(§10 null-evidence:
+    근거 텍스트를 환각으로 채우지 않는다). 클러스터당 brief_item 1건, 멱등. ticker_link가
+    이 brief_item을 읽어 티커를 붙이므로 끝에서 flush해 id를 확정한다.
+    """
+    for cluster_row in _clusters_without_brief_item(session, brief_date):
+        session.add(BriefItem(brief_date=brief_date, cluster_id=cluster_row.id, status="empty"))
+    session.flush()
+
+
+def run_pipeline(
+    brief_date: date,
+    dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
+) -> None:
+    """일간 브리프 파이프라인 1회 실행. 현재: dedup → generate_impact(골격) → ticker_link.
+
+    §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
+    FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
+    cluster·event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
+    dictionary 미주입 시 빈 사전(링크 0건) — 유니버스 하드코딩 금지(§2).
     """
     with SessionLocal() as session:
         dedup(session, brief_date)
+        generate_impact(session, brief_date)
+        ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
         session.commit()
