@@ -8,6 +8,7 @@ truststore로 OS 인증서 신뢰(CLAUDE.md gotcha). 키 없으면 무료 한도
 
 from __future__ import annotations
 
+import logging
 import ssl
 import time
 from collections.abc import Callable
@@ -19,6 +20,17 @@ import truststore
 from app.config import settings
 
 _MAPPING_URL = "https://api.openfigi.com/v3/mapping"
+_log = logging.getLogger(__name__)
+
+# 복수 레코드 중 우선 거래소 선택 (US: NYSE > NASDAQ NMS > ..., KR: KOSPI > KOSDAQ).
+_EXCH_PRIORITY: dict[str, int] = {
+    "UN": 0,  # NYSE
+    "UW": 1,  # NASDAQ NMS
+    "UQ": 2,  # NASDAQ Small Cap
+    "UA": 3,  # NYSE American
+    "KS": 0,  # KOSPI
+    "KQ": 1,  # KOSDAQ
+}
 
 
 @dataclass(frozen=True)
@@ -36,6 +48,14 @@ class OpenFIGIRateLimited(Exception):
     def __init__(self, retry_after: float | None) -> None:
         super().__init__(f"OpenFIGI rate limited (retry_after={retry_after})")
         self.retry_after = retry_after
+
+
+class OpenFIGIError(Exception):
+    """OpenFIGI 200 응답에 error 키 포함 — no-match warning과 구분되는 실 오류."""
+
+
+def _best_record(records: list[dict[str, str]]) -> dict[str, str]:
+    return min(records, key=lambda r: _EXCH_PRIORITY.get(r.get("exchCode", ""), 999))
 
 
 def _client() -> httpx.Client:
@@ -84,14 +104,20 @@ def normalize(
         if last.status_code == 429:
             raise OpenFIGIRateLimited(_retry_after(last))
         last.raise_for_status()
-        records = last.json()[0].get("data")
+        body = last.json()[0]
+        if "error" in body:
+            raise OpenFIGIError(body["error"])
+        records = body.get("data")
+    except httpx.TimeoutException:
+        _log.warning("OpenFIGI timeout for %s/%s — treated as no-match", id_type, id_value)
+        return None
     finally:
         if owns:
             http.close()
 
     if not records:
         return None
-    top = records[0]
+    top = _best_record(records)
     return NormalizedTicker(
         ticker=top["ticker"],
         exch_code=top.get("exchCode"),
