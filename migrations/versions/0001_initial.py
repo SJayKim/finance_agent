@@ -5,6 +5,7 @@ Revises:
 Create Date: 2026-06-19
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -36,7 +37,9 @@ def upgrade() -> None:
         sa.Column("source_id", sa.Integer, sa.ForeignKey("sources.id"), nullable=False),
         sa.Column("external_id", sa.String, nullable=False),
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("fetched_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column(
+            "fetched_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.Column("lang", sa.String, nullable=True),
         sa.Column("title", sa.Text, nullable=True),
         sa.Column("summary", sa.Text, nullable=True),
@@ -55,7 +58,9 @@ def upgrade() -> None:
         sa.Column(
             "representative_doc_id", sa.Integer, sa.ForeignKey("raw_documents.id"), nullable=True
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     op.create_table(
@@ -76,14 +81,14 @@ def upgrade() -> None:
         sa.Column("confidence", sa.String, nullable=True),
         sa.Column("analysis_text", sa.Text, nullable=True),
         sa.Column("status", sa.String, nullable=False),
-        sa.Column("generated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column(
+            "generated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
     op.create_table(
         "brief_item_tickers",
-        sa.Column(
-            "brief_item_id", sa.Integer, sa.ForeignKey("brief_items.id"), primary_key=True
-        ),
+        sa.Column("brief_item_id", sa.Integer, sa.ForeignKey("brief_items.id"), primary_key=True),
         sa.Column("ticker", sa.String, primary_key=True),
         sa.Column("market", sa.String, nullable=False),
         sa.Column("link_precision", sa.Float, nullable=True),
@@ -94,9 +99,7 @@ def upgrade() -> None:
         "citations",
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("brief_item_id", sa.Integer, sa.ForeignKey("brief_items.id"), nullable=False),
-        sa.Column(
-            "raw_document_id", sa.Integer, sa.ForeignKey("raw_documents.id"), nullable=False
-        ),
+        sa.Column("raw_document_id", sa.Integer, sa.ForeignKey("raw_documents.id"), nullable=False),
         sa.Column("cited_text", sa.Text, nullable=False),
         sa.Column("char_start", sa.Integer, nullable=True),
         sa.Column("char_end", sa.Integer, nullable=True),
@@ -115,7 +118,7 @@ def upgrade() -> None:
     op.create_table(
         "audit_log",
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("ts", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column("ts", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("actor", sa.String, nullable=True),
         sa.Column("action", sa.String, nullable=False),
         sa.Column("payload", postgresql.JSONB, nullable=True),

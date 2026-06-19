@@ -74,9 +74,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Project-Specific Gotchas
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
+- configparser가 읽는 설정 파일(`alembic.ini`, `*.ini`, `*.cfg`)에는 비-ASCII(한글 주석 등) 금지. Windows 로케일 코덱(cp949)으로 읽혀 `UnicodeDecodeError`로 alembic이 로드 실패한다. 비-ASCII 주석은 UTF-8로 읽히는 `.py`에만 둘 것. (2026-06-19, alembic.ini)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
+- 마이그레이션 변경은 실DB(Docker `ankane/pgvector`)에서 `upgrade head → alembic check(클린) → downgrade base` 라운드트립으로 검증한다. pytest/ruff/mypy는 alembic을 실행하지 않으므로 마이그레이션 결함(인코딩·nullable 드리프트 등)을 통과시킨다.
 
 ## Self-Reflection on Errors
 When an error, exception, test failure, or unexpected behavior occurs
