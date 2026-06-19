@@ -76,9 +76,7 @@ class ClusterMember(Base):
     __tablename__ = "cluster_members"
 
     cluster_id: Mapped[int] = mapped_column(ForeignKey("clusters.id"), primary_key=True)
-    raw_document_id: Mapped[int] = mapped_column(
-        ForeignKey("raw_documents.id"), primary_key=True
-    )
+    raw_document_id: Mapped[int] = mapped_column(ForeignKey("raw_documents.id"), primary_key=True)
 
 
 class BriefItem(Base):
@@ -87,7 +85,9 @@ class BriefItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     brief_date: Mapped[date] = mapped_column(Date)
     cluster_id: Mapped[int | None] = mapped_column(ForeignKey("clusters.id"), nullable=True)
-    event_type: Mapped[str | None] = mapped_column(String, nullable=True)  # STAGE0-BLOCKED: 자유 문자열
+    event_type: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # STAGE0-BLOCKED: 자유 문자열
     direction: Mapped[str | None] = mapped_column(String, nullable=True)  # 긍정/부정/중립
     confidence: Mapped[str | None] = mapped_column(String, nullable=True)  # HIGH/MED/LOW
     analysis_text: Mapped[str | None] = mapped_column(Text, nullable=True)
