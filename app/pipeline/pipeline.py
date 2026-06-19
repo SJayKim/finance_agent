@@ -11,11 +11,12 @@ normalize → dedup(SimHash→임베딩 cosine) → cluster → ticker-link(Open
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
 from app.pipeline.dedup import near_duplicate_groups
@@ -26,27 +27,37 @@ def normalize() -> None:
     raise NotImplementedError
 
 
-def _candidate_docs(session: Session) -> list[tuple[int, str]]:
-    """아직 어떤 클러스터에도 안 들어간, 제목 있는 raw_documents (멱등 재실행 대비)."""
+def _freshness_cutoff(brief_date: date, hours: int) -> datetime:
+    """brief_date 종일(UTC 다음날 00:00)에서 hours를 뺀 신선도 컷오프 (§5.7)."""
+    end_of_day = datetime(brief_date.year, brief_date.month, brief_date.day, tzinfo=timezone.utc) + timedelta(days=1)
+    return end_of_day - timedelta(hours=hours)
+
+
+def _candidate_docs(session: Session, cutoff: datetime) -> list[tuple[int, str]]:
+    """아직 어떤 클러스터에도 안 들어간, 신선도 윈도우 내 제목 있는 raw_documents (멱등 재실행 대비).
+
+    published_at IS NULL인 문서는 신선도를 알 수 없으므로 포함(배제 금지).
+    """
     clustered = select(ClusterMember.raw_document_id)
     rows = session.execute(
-        select(RawDocument.id, RawDocument.title).where(RawDocument.id.not_in(clustered))
+        select(RawDocument.id, RawDocument.title).where(
+            RawDocument.id.not_in(clustered),
+            (RawDocument.published_at >= cutoff) | RawDocument.published_at.is_(None),
+        )
     ).all()
     return [(doc_id, title) for doc_id, title in rows if title is not None]
 
 
-def dedup(session: Session, brief_date: date) -> None:
+def dedup(session: Session, brief_date: date, freshness_window_hours: int) -> None:
     """dedup 1차: 제목 SimHash 근접중복 그룹을 clusters/cluster_members로 적재 (§6.2).
 
     크기 ≥2 그룹만 클러스터가 된다(단독 문서는 cluster 단계(§6.3) 몫). 이미 클러스터에
     속한 문서는 후보에서 빠져 재실행이 중복 적재하지 않는다. 커밋은 호출자(run_pipeline).
-
-    한계(TODO §5.7): 후보를 날짜로 스코프하지 않는다. brief_date는 클러스터 실행일
-    도장일 뿐이라, 누적된 옛 문서가 새 근접중복과 묶이면 오늘 날짜로 찍힐 수 있다.
-    published_at 신선도 윈도우(config freshness_window_hours) 필터는 §5.7 컷오프
-    기준시각·null published_at 처리가 확정되면 _candidate_docs에 추가한다.
+    신선도 컷오프(§5.7): published_at >= _freshness_cutoff(brief_date, freshness_window_hours)
+    또는 published_at IS NULL인 문서만 후보로 받는다.
     """
-    for group in near_duplicate_groups(_candidate_docs(session)):
+    cutoff = _freshness_cutoff(brief_date, freshness_window_hours)
+    for group in near_duplicate_groups(_candidate_docs(session, cutoff)):
         cluster_row = Cluster(brief_date=brief_date, representative_doc_id=min(group))
         session.add(cluster_row)
         session.flush()  # cluster_row.id 확보 후 멤버 적재
@@ -134,6 +145,7 @@ def generate_impact(session: Session, brief_date: date) -> None:
 def run_pipeline(
     brief_date: date,
     dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
+    freshness_window_hours: int = settings.freshness_window_hours,
 ) -> None:
     """일간 브리프 파이프라인 1회 실행. 현재: dedup → generate_impact(골격) → ticker_link.
 
@@ -143,7 +155,7 @@ def run_pipeline(
     dictionary 미주입 시 빈 사전(링크 0건) — 유니버스 하드코딩 금지(§2).
     """
     with SessionLocal() as session:
-        dedup(session, brief_date)
+        dedup(session, brief_date, freshness_window_hours)
         generate_impact(session, brief_date)
         ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
         session.commit()
