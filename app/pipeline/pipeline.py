@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -21,6 +21,13 @@ from app.db import SessionLocal
 from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
 from app.pipeline.dedup import near_duplicate_groups
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
+
+
+_PIPELINE_LOCK_KEY = 1_958_374_620  # arbitrary stable bigint for pg_try_advisory_lock
+
+
+class PipelineAlreadyRunning(RuntimeError):
+    """run_pipeline 동시 실행 방지 가드 위반."""
 
 
 def normalize() -> None:
@@ -155,7 +162,15 @@ def run_pipeline(
     dictionary 미주입 시 빈 사전(링크 0건) — 유니버스 하드코딩 금지(§2).
     """
     with SessionLocal() as session:
-        dedup(session, brief_date, freshness_window_hours)
-        generate_impact(session, brief_date)
-        ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
-        session.commit()
+        acquired = session.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _PIPELINE_LOCK_KEY}
+        ).scalar()
+        if not acquired:
+            raise PipelineAlreadyRunning(f"run_pipeline already running (lock {_PIPELINE_LOCK_KEY})")
+        try:
+            dedup(session, brief_date, freshness_window_hours)
+            generate_impact(session, brief_date)
+            ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
+            session.commit()
+        finally:
+            session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY})
