@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     naver_client_secret: str | None = None
     opendart_api_key: str | None = None
     sec_edgar_user_agent: str | None = None
+    openfigi_api_key: str | None = None  # §5.6 — 없으면 무료 한도(25 req/min), 있으면 상향
     coingecko_api_key: str | None = None
     marketaux_api_key: str | None = None
     finnhub_api_key: str | None = None
