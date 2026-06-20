@@ -1,6 +1,10 @@
+from datetime import date
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.pipeline.pipeline import PipelineAlreadyRunning
 
 client = TestClient(app)
 
@@ -17,7 +21,24 @@ def test_dashboard_root() -> None:
     assert "증거 브리프" in resp.text
 
 
-def test_trigger_stub() -> None:
+def test_trigger_runs_pipeline_for_today_kst(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[date] = []
+
+    def fake_run(brief_date: date) -> None:
+        calls.append(brief_date)
+
+    monkeypatch.setattr("app.main.run_pipeline", fake_run)
     resp = client.post("/trigger")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "accepted"
+    assert len(calls) == 1
+    assert resp.json() == {"status": "ok", "brief_date": calls[0].isoformat()}
+
+
+def test_trigger_conflict_returns_409(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(brief_date: date) -> None:
+        raise PipelineAlreadyRunning("already running")
+
+    monkeypatch.setattr("app.main.run_pipeline", boom)
+    resp = client.post("/trigger")
+    assert resp.status_code == 409
+    assert "already running" in resp.json()["detail"]
