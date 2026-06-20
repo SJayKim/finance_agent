@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # 신선도 윈도우 (§5.7) — published_at 기준 필터. 시간 단위.
     freshness_window_hours: int = 24
 
+    # 티커 사전 (§6.4 / §2 설정 경계) — alias,ticker,market CSV 경로. 미설정 시 링크 0건.
+    # 유니버스를 소스에 담지 않는다(§2): 사전 데이터는 운영자가 이 경로로만 주입.
+    ticker_dictionary_path: str | None = None
+
     # 소스 API 키 (제공 전엔 빈 값. 커넥터는 키 없으면 비활성)
     naver_client_id: str | None = None
     naver_client_secret: str | None = None

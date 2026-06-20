@@ -20,6 +20,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
 from app.pipeline.dedup import near_duplicate_groups
+from app.pipeline.dictionary import load_dictionary
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
 
 
@@ -36,7 +37,9 @@ def normalize() -> None:
 
 def _freshness_cutoff(brief_date: date, hours: int) -> datetime:
     """brief_date 종일(UTC 다음날 00:00)에서 hours를 뺀 신선도 컷오프 (§5.7)."""
-    end_of_day = datetime(brief_date.year, brief_date.month, brief_date.day, tzinfo=timezone.utc) + timedelta(days=1)
+    end_of_day = datetime(
+        brief_date.year, brief_date.month, brief_date.day, tzinfo=timezone.utc
+    ) + timedelta(days=1)
     return end_of_day - timedelta(hours=hours)
 
 
@@ -159,18 +162,23 @@ def run_pipeline(
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
     cluster·event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
-    dictionary 미주입 시 빈 사전(링크 0건) — 유니버스 하드코딩 금지(§2).
+    dictionary 미주입 시 settings.ticker_dictionary_path CSV에서 적재 — 경로도 없으면
+    빈 사전(링크 0건). 유니버스는 소스에 담지 않고 설정 경계로만 받는다(§2).
     """
+    if dictionary is None:
+        dictionary = load_dictionary(settings.ticker_dictionary_path)
     with SessionLocal() as session:
         acquired = session.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": _PIPELINE_LOCK_KEY}
         ).scalar()
         if not acquired:
-            raise PipelineAlreadyRunning(f"run_pipeline already running (lock {_PIPELINE_LOCK_KEY})")
+            raise PipelineAlreadyRunning(
+                f"run_pipeline already running (lock {_PIPELINE_LOCK_KEY})"
+            )
         try:
             dedup(session, brief_date, freshness_window_hours)
             generate_impact(session, brief_date)
-            ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
+            ticker_link(session, brief_date, dictionary, openfigi_normalizer)
             session.commit()
         finally:
             session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY})
