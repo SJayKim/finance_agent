@@ -5,7 +5,7 @@ normalize → dedup(SimHash→임베딩 cosine) → cluster → ticker-link(Open
 
 단계 간 상태는 DB로 흐른다(§3·§8: Postgres가 단일 상태 저장소). run_pipeline은
 구현된 단계만 명시 호출하고, 나머지는 구현될 때 한 줄씩 추가한다.
-현재: dedup → 영향도 골격(brief_items) → ticker-link 배선까지.
+현재: dedup → cluster(단독 문서) → 영향도 골격(brief_items) → ticker-link 배선까지.
 """
 
 from __future__ import annotations
@@ -74,10 +74,25 @@ def dedup(session: Session, brief_date: date, freshness_window_hours: int) -> No
         session.add_all(
             ClusterMember(cluster_id=cluster_row.id, raw_document_id=doc_id) for doc_id in group
         )
+    session.flush()  # cluster 단계(§6.3)가 이 멤버를 후보에서 빼므로 끝에서 flush(autoflush=False)
 
 
-def cluster() -> None:
-    raise NotImplementedError
+def cluster(session: Session, brief_date: date, freshness_window_hours: int) -> None:
+    """cluster 단계 (§6.3): dedup 후 남은 단독 문서를 1-멤버 클러스터로 적재.
+
+    임베딩 cosine 2차 병합(§6.3 후단)은 §11.3 모델 미정이라 보류한다. 베이스라인은
+    아직 어떤 클러스터에도 안 든, 신선도 윈도우 내 제목 있는 문서마다 1-멤버 클러스터를
+    만든다 — 단독 뉴스도 brief_item이 될 자격을 얻는다(이게 없으면 dedup이 만든 크기 ≥2
+    그룹만 통과해 고유 기사는 영원히 누락). _candidate_docs가 이미 클러스터된 문서를
+    빼므로 dedup의 ≥2 그룹은 보존되고 단독 문서만 새 클러스터가 된다(중복 적재 없음).
+    커밋은 호출자(run_pipeline).
+    """
+    cutoff = _freshness_cutoff(brief_date, freshness_window_hours)
+    for doc_id, _title in _candidate_docs(session, cutoff):
+        cluster_row = Cluster(brief_date=brief_date, representative_doc_id=doc_id)
+        session.add(cluster_row)
+        session.flush()  # cluster_row.id 확보 후 멤버 적재
+        session.add(ClusterMember(cluster_id=cluster_row.id, raw_document_id=doc_id))
 
 
 def _brief_items_without_tickers(session: Session, brief_date: date) -> list[BriefItem]:
@@ -157,11 +172,11 @@ def run_pipeline(
     dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
     freshness_window_hours: int = settings.freshness_window_hours,
 ) -> None:
-    """일간 브리프 파이프라인 1회 실행. 현재: dedup → generate_impact(골격) → ticker_link.
+    """일간 브리프 파이프라인 1회 실행. 현재: dedup → cluster → generate_impact(골격) → ticker_link.
 
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
-    cluster·event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
+    event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
     dictionary 미주입 시 settings.ticker_dictionary_path CSV에서 적재 — 경로도 없으면
     빈 사전(링크 0건). 유니버스는 소스에 담지 않고 설정 경계로만 받는다(§2).
     """
@@ -177,6 +192,7 @@ def run_pipeline(
             )
         try:
             dedup(session, brief_date, freshness_window_hours)
+            cluster(session, brief_date, freshness_window_hours)
             generate_impact(session, brief_date)
             ticker_link(session, brief_date, dictionary, openfigi_normalizer)
             session.commit()
