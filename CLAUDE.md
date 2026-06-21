@@ -80,6 +80,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
 - 마이그레이션 변경은 실DB(Docker `ankane/pgvector`)에서 `upgrade head → alembic check(클린) → downgrade base` 라운드트립으로 검증한다. pytest/ruff/mypy는 alembic을 실행하지 않으므로 마이그레이션 결함(인코딩·nullable 드리프트 등)을 통과시킨다.
+- 같은 세션·트랜잭션에서 한 파이프라인 단계가 직전 단계가 `add`한 행을 SELECT로 다시 읽으면(예: `cluster._candidate_docs`가 `dedup`의 `ClusterMember`를 제외), 쓴 단계 끝에서 `session.flush()`를 명시 호출한다(`SessionLocal` `autoflush=False`라 안 하면 후속 SELECT가 미반영 행을 못 봐 중복 처리 — dedup→cluster 중복 클러스터 (4,4) 회귀). 커밋은 호출자가 일괄 처리. (2026-06-20, app/pipeline/pipeline.py dedup)
 
 ## Self-Reflection on Errors
 When an error, exception, test failure, or unexpected behavior occurs
