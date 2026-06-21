@@ -8,12 +8,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
-from app.models import BriefItem, Cluster, RawDocument, Source
+from app.models import BriefItem, Citation, Cluster, RawDocument, Source
+from app.pipeline.citations import CitedSpan, ImpactResult, SourceDoc
 from app.pipeline.pipeline import run_pipeline
 
 _BRIEF_DATE = date(2026, 6, 20)
@@ -70,3 +72,56 @@ def test_rerun_is_idempotent(db: sessionmaker) -> None:
     run_pipeline(_BRIEF_DATE, dictionary={})
     run_pipeline(_BRIEF_DATE, dictionary={})  # 후보 제외 로직이 중복 적재를 막아야 한다
     assert _counts(db) == (2, 2)
+
+
+def _grounded_analyzer(docs: Sequence[SourceDoc]) -> ImpactResult | None:
+    """가짜 §7 분석기: 첫 멤버 문서를 인용하는 ok 결과를 돌려준다(네트워크 없이 적재 검증)."""
+    first = docs[0]
+    return ImpactResult(
+        analysis_text="impact for " + (first.title or ""),
+        citations=[
+            CitedSpan(
+                raw_document_id=first.raw_document_id,
+                cited_text=first.title or "",
+                char_start=0,
+                char_end=len(first.title or ""),
+                source_published_at=first.published_at,
+            )
+        ],
+        event_type="price_move",
+        direction="긍정",
+        confidence="MED",
+    )
+
+
+def _citation_count(db: sessionmaker) -> int:
+    with db() as s:
+        return s.execute(select(func.count()).select_from(Citation)).scalar_one()
+
+
+def test_analyze_impact_fills_brief_items_and_citations(db: sessionmaker) -> None:
+    _seed(db)
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=_grounded_analyzer)
+    with db() as s:
+        items = s.execute(select(BriefItem)).scalars().all()
+    assert len(items) == 2
+    assert all(i.status == "ok" for i in items)
+    assert all(i.event_type == "price_move" and i.direction == "긍정" for i in items)
+    assert all(i.analysis_text for i in items)
+    assert _citation_count(db) == 2  # 클러스터당 인용 1건
+
+
+def test_analyze_impact_degraded_on_analyzer_failure(db: sessionmaker) -> None:
+    _seed(db)
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=lambda docs: None)  # API 장애 흉내
+    with db() as s:
+        items = s.execute(select(BriefItem)).scalars().all()
+    assert all(i.status == "degraded" for i in items)
+    assert _citation_count(db) == 0
+
+
+def test_analyze_impact_rerun_skips_ok_items(db: sessionmaker) -> None:
+    _seed(db)
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=_grounded_analyzer)
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=_grounded_analyzer)  # ok는 재분석 안 함
+    assert _citation_count(db) == 2  # 중복 인용 적재 없음

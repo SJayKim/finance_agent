@@ -5,7 +5,8 @@ normalize → dedup(SimHash→임베딩 cosine) → cluster → ticker-link(Open
 
 단계 간 상태는 DB로 흐른다(§3·§8: Postgres가 단일 상태 저장소). run_pipeline은
 구현된 단계만 명시 호출하고, 나머지는 구현될 때 한 줄씩 추가한다.
-현재: dedup → cluster(단독 문서) → 영향도 골격(brief_items) → ticker-link 배선까지.
+현재: dedup → cluster(단독 문서) → 영향도 골격(brief_items) → §7 2-패스 분석(analyze_impact)
+→ ticker-link 배선까지.
 """
 
 from __future__ import annotations
@@ -18,7 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
+from app.models import BriefItem, BriefItemTicker, Citation, Cluster, ClusterMember, RawDocument
+from app.pipeline.citations import (
+    ImpactAnalyzer,
+    SourceDoc,
+    anthropic_analyzer,
+    build_client,
+)
 from app.pipeline.dedup import near_duplicate_groups
 from app.pipeline.dictionary import load_dictionary
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
@@ -157,31 +164,101 @@ def _clusters_without_brief_item(session: Session, brief_date: date) -> list[Clu
 def generate_impact(session: Session, brief_date: date) -> None:
     """영향도 생성 골격 (§6.6/§7): 클러스터 → brief_items.
 
-    §7 2-패스 Citations 분석은 미구현이라 event_type·direction·confidence·
-    analysis_text는 NULL로 두고 status=empty로 정직하게 표기한다(§10 null-evidence:
-    근거 텍스트를 환각으로 채우지 않는다). 클러스터당 brief_item 1건, 멱등. ticker_link가
-    이 brief_item을 읽어 티커를 붙이므로 끝에서 flush해 id를 확정한다.
+    여기선 빈 brief_item만 만든다 — event_type·direction·confidence·analysis_text는 NULL,
+    status=empty. 채우는 일은 다음 단계 analyze_impact(§7 2-패스 Citations) 몫이며, 분석기가
+    없거나 근거가 없으면 status=empty가 그대로 남는다(§10 null-evidence: 환각으로 채우지
+    않는다). 클러스터당 brief_item 1건, 멱등. ticker_link가 이 brief_item을 읽어 티커를
+    붙이므로 끝에서 flush해 id를 확정한다.
     """
     for cluster_row in _clusters_without_brief_item(session, brief_date):
         session.add(BriefItem(brief_date=brief_date, cluster_id=cluster_row.id, status="empty"))
     session.flush()
 
 
+def _empty_brief_items(session: Session, brief_date: date) -> list[BriefItem]:
+    """이 brief_date의 아직 분석 안 된 brief_item (status=empty). 멱등 재시도용."""
+    rows = session.execute(
+        select(BriefItem).where(BriefItem.brief_date == brief_date, BriefItem.status == "empty")
+    ).scalars()
+    return list(rows)
+
+
+def _cluster_source_docs(session: Session, cluster_id: int) -> list[SourceDoc]:
+    """클러스터 멤버 문서들을 패스 1 입력(SourceDoc)으로. body는 P5로 None일 수 있어 제목+요약만."""
+    rows = session.execute(
+        select(RawDocument.id, RawDocument.title, RawDocument.summary, RawDocument.published_at)
+        .join(ClusterMember, ClusterMember.raw_document_id == RawDocument.id)
+        .where(ClusterMember.cluster_id == cluster_id)
+    ).all()
+    return [
+        SourceDoc(raw_document_id=doc_id, title=title, summary=summary, published_at=published_at)
+        for doc_id, title, summary, published_at in rows
+    ]
+
+
+def analyze_impact(session: Session, brief_date: date, analyzer: ImpactAnalyzer | None) -> None:
+    """§7 2-패스 Citations 분석으로 status=empty brief_item을 채운다.
+
+    analyzer가 None이면 비활성(골격만 유지 — 키 없거나 오프라인). 클러스터 소스 문서를 모아
+    analyzer 호출 후 결과를 적재한다:
+    - None 반환(API 장애·쿼터 소진) → status=degraded (§10: 어떤 소스가 빠졌는지 표기).
+    - citations ≥1 → analysis_text·event_type·direction·confidence + citations 적재, status=ok.
+    - citations 0(근거 없음) → status=empty 유지 (§10: 분석 텍스트를 환각으로 채우지 않는다).
+    멱등: ok/degraded는 다음 실행에서 건너뛰고 남은 empty만 재시도한다. 영향 종목은 LLM이
+    아니라 ticker_link(§6.4)가 결정하므로 여기서 brief_item_tickers는 건드리지 않는다.
+    """
+    if analyzer is None:
+        return
+    for item in _empty_brief_items(session, brief_date):
+        if item.cluster_id is None:
+            continue
+        result = analyzer(_cluster_source_docs(session, item.cluster_id))
+        if result is None:
+            item.status = "degraded"
+            continue
+        if not result.citations:
+            continue  # 근거 없음 → empty 유지
+        item.event_type = result.event_type
+        item.direction = result.direction
+        item.confidence = result.confidence
+        item.analysis_text = result.analysis_text
+        item.status = "ok"
+        session.add_all(
+            Citation(
+                brief_item_id=item.id,
+                raw_document_id=span.raw_document_id,
+                cited_text=span.cited_text,
+                char_start=span.char_start,
+                char_end=span.char_end,
+                source_published_at=span.source_published_at,
+            )
+            for span in result.citations
+        )
+
+
 def run_pipeline(
     brief_date: date,
     dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
     freshness_window_hours: int = settings.freshness_window_hours,
+    analyzer: ImpactAnalyzer | None = None,
 ) -> None:
-    """일간 브리프 파이프라인 1회 실행. 현재: dedup → cluster → generate_impact(골격) → ticker_link.
+    """일간 브리프 파이프라인 1회 실행: dedup → cluster → generate_impact(골격) → analyze_impact(§7) → ticker_link.
 
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
-    event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
+    event_classify는 구현되는 대로 순서대로 추가한다.
     dictionary 미주입 시 settings.ticker_dictionary_path CSV에서 적재 — 경로도 없으면
     빈 사전(링크 0건). 유니버스는 소스에 담지 않고 설정 경계로만 받는다(§2).
+    analyzer 미주입 시 settings.anthropic_api_key가 있으면 실 Anthropic 2-패스 분석기를 만들고,
+    없으면 None(analyze_impact 비활성 — brief_item status=empty 유지). 테스트는 가짜 분석기를
+    주입해 네트워크 없이 적재를 검증한다.
     """
     if dictionary is None:
         dictionary = load_dictionary(settings.ticker_dictionary_path)
+    if analyzer is None and settings.anthropic_api_key:
+        analyzer = anthropic_analyzer(
+            build_client(settings.anthropic_api_key), settings.impact_model
+        )
     with SessionLocal() as session:
         acquired = session.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": _PIPELINE_LOCK_KEY}
@@ -194,6 +271,7 @@ def run_pipeline(
             dedup(session, brief_date, freshness_window_hours)
             cluster(session, brief_date, freshness_window_hours)
             generate_impact(session, brief_date)
+            analyze_impact(session, brief_date, analyzer)
             ticker_link(session, brief_date, dictionary, openfigi_normalizer)
             session.commit()
         finally:

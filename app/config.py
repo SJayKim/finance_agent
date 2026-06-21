@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     # 유니버스를 소스에 담지 않는다(§2): 사전 데이터는 운영자가 이 경로로만 주입.
     ticker_dictionary_path: str | None = None
 
+    # §7 2-패스 Citations 분석 (Anthropic). 키 없으면 analyze_impact는 비활성 → brief_item
+    # status=empty 유지(골격만). impact_model은 설계 §7 고정값(claude-opus-4-8).
+    anthropic_api_key: str | None = None
+    impact_model: str = "claude-opus-4-8"
+
     # 소스 API 키 (제공 전엔 빈 값. 커넥터는 키 없으면 비활성)
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
