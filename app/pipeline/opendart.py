@@ -99,6 +99,8 @@ def sync(session: Session, *, client: httpx.Client | None = None) -> int:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    # httpx INFO 로깅은 요청 URL을 통째로 찍는다 — crtfc_key(API 키)가 노출되므로 억제.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     with SessionLocal() as session:
         inserted = sync(session)
     _log.info("OpenDART 동기화: security_aliases %d행 신규 적재", inserted)

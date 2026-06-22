@@ -76,6 +76,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 <!-- 자동 reflection으로 누적됨. 초기에는 비워두기 -->
 - configparser가 읽는 설정 파일(`alembic.ini`, `*.ini`, `*.cfg`)에는 비-ASCII(한글 주석 등) 금지. Windows 로케일 코덱(cp949)으로 읽혀 `UnicodeDecodeError`로 alembic이 로드 실패한다. 비-ASCII 주석은 UTF-8로 읽히는 `.py`에만 둘 것. (2026-06-19, alembic.ini)
 - 런타임 Python HTTP 클라이언트(httpx/requests)로 외부 HTTPS 요청 시 `truststore`로 OS 인증서 저장소를 신뢰시킬 것(사내 TLS 가로채기 → `CERTIFICATE_VERIFY_FAILED`). 스코프 좁게: `ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` → `httpx.Client(verify=ctx)`. (2026-06-19, app/collector/rss.py fetch)
+- SQLAlchemy `INSERT ... ON CONFLICT DO NOTHING`의 `result.rowcount`는 dialect가 multi-rowcount를 지원해도 **-1(신뢰 불가)**을 반환한다(실측: 3971건 적재에도 -1). 신규 적재 수가 필요하면 `.returning(<PK 컬럼>)` 붙이고 `len(session.execute(stmt).fetchall())`로 셀 것. (2026-06-22, app/pipeline/opendart.py sync)
+- API 키를 쿼리스트링으로 받는 외부 API(OpenDART `crtfc_key` 등)는 httpx INFO 로깅이 URL을 통째로 찍어 키를 노출한다. 러너에서 `logging.getLogger("httpx").setLevel(logging.WARNING)`로 억제할 것. (2026-06-22, app/pipeline/opendart.py main)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
