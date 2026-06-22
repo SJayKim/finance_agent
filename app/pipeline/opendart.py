@@ -15,11 +15,8 @@ import ssl
 import zipfile
 from xml.etree import ElementTree
 
-from typing import cast
-
 import httpx
 import truststore
-from sqlalchemy import CursorResult
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -87,10 +84,17 @@ def sync(session: Session, *, client: httpx.Client | None = None) -> int:
     if not pairs:
         return 0
     rows = [{"alias": name, "ticker": code, "market": "KR"} for name, code in pairs]
-    stmt = pg_insert(SecurityAlias).values(rows).on_conflict_do_nothing()
-    result = cast(CursorResult, session.execute(stmt))
+    # ON CONFLICT DO NOTHING은 rowcount를 -1(신뢰 불가)로 보고한다. RETURNING은
+    # 실제 삽입된 행만 돌려주므로 "신규 적재 수"와 정확히 일치한다.
+    stmt = (
+        pg_insert(SecurityAlias)
+        .values(rows)
+        .on_conflict_do_nothing()
+        .returning(SecurityAlias.alias)
+    )
+    inserted = len(session.execute(stmt).fetchall())
     session.commit()
-    return result.rowcount
+    return inserted
 
 
 def main() -> None:
