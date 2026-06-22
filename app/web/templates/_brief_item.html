@@ -1,0 +1,44 @@
+<details class="brief-item status-{{ b.status }}">
+  <summary>
+    <span class="event-type">{{ b.event_type or "미분류" }}</span>
+    {% if b.direction %}<span class="direction dir-{{ b.direction }}">{{ b.direction }}</span>{% endif %}
+    {% if b.confidence %}<span class="confidence">{{ b.confidence }}</span>{% endif %}
+    {% if b.status == "degraded" %}<span class="badge degraded">일부 소스 누락</span>{% endif %}
+    {% if b.status == "empty" %}<span class="badge empty">근거 없음</span>{% endif %}
+  </summary>
+
+  <div class="brief-body">
+    {% if b.status == "empty" %}
+      <p class="no-evidence">근거 없음 — 분석 미생성 (§10).</p>
+    {% else %}
+      {% if b.status == "degraded" %}
+        <p class="degraded-note">분석 일시 불가 — 일부 소스가 빠졌습니다.</p>
+      {% endif %}
+      {% if b.analysis_text %}<p class="analysis">{{ b.analysis_text }}</p>{% endif %}
+
+      {% if b.tickers %}
+      <ul class="tickers">
+        {% for t in b.tickers %}
+        <li>
+          <span class="ticker">{{ t.ticker }}</span>
+          <span class="market">{{ t.market }}</span>
+          {% if t.is_candidate %}<span class="candidate">후보</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      {% if b.citations %}
+      <ul class="citations">
+        {% for c in b.citations %}
+        <li>
+          <blockquote>{{ c.cited_text }}</blockquote>
+          <span class="pub">{% if c.source_published_at %}{{ c.source_published_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}</span>
+          {% if c.url %}<a href="{{ c.url }}" target="_blank" rel="noopener">원문</a>{% else %}<span class="no-link">원문 링크 없음</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    {% endif %}
+  </div>
+</details>

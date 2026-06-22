@@ -5,11 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>증거 브리프</title>
   <link rel="stylesheet" href="/static/app.css" />
+  <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
 </head>
 <body>
   <main>
-    <h1>증거 브리프</h1>
-    <p>Stage 1 골격. 파이프라인·대시보드 미구현.</p>
+    <header>
+      <h1>증거 브리프</h1>
+      <p class="meta">
+        {{ brief_date.isoformat() }} (KST){% if last_updated %} · 마지막 업데이트 {{ last_updated.strftime("%Y-%m-%d %H:%M") }}{% endif %}
+      </p>
+    </header>
+
+    <section class="chat">
+      {% if chat_enabled %}
+      <form hx-post="/chat" hx-target="#chat-answer" hx-swap="innerHTML" hx-disabled-elt="find button">
+        <input type="hidden" name="date" value="{{ brief_date.isoformat() }}" />
+        <input type="text" name="q" placeholder="이 브리프에 근거해 질문하세요" autocomplete="off" />
+        <button type="submit">질문</button>
+      </form>
+      {% else %}
+      <p class="chat-disabled">채팅 비활성 (ANTHROPIC_API_KEY 미설정)</p>
+      {% endif %}
+      <div id="chat-answer"></div>
+    </section>
+
+    <section class="briefs">
+      {% if briefs %}
+        {% for b in briefs %}{% include "_brief_item.html" %}{% endfor %}
+      {% else %}
+        <p class="empty">브리프 없음</p>
+      {% endif %}
+    </section>
   </main>
 </body>
 </html>

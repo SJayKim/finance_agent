@@ -1,0 +1,17 @@
+{% if answer %}
+<div class="chat-result">
+  <p class="answer-text">{{ answer.text }}</p>
+  <ul class="answer-citations">
+    {% for c in answer.citations %}
+    <li>
+      <blockquote>{{ c.cited_text }}</blockquote>
+      {% if c.url %}<a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.title or "원문" }}</a>{% else %}<span class="no-link">원문 링크 없음</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% elif disabled %}
+<p class="chat-disabled">채팅 비활성 (ANTHROPIC_API_KEY 미설정)</p>
+{% else %}
+<p class="no-evidence">관련 근거 없음</p>
+{% endif %}

@@ -2,6 +2,7 @@ from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.pipeline.pipeline import PipelineAlreadyRunning
@@ -15,7 +16,8 @@ def test_health() -> None:
     assert resp.json() == {"status": "ok"}
 
 
-def test_dashboard_root() -> None:
+def test_dashboard_root(db: sessionmaker) -> None:
+    # GET /는 이제 DB(brief_items)를 읽는다 — db 픽스처로 격리(없으면 skip).
     resp = client.get("/")
     assert resp.status_code == 200
     assert "증거 브리프" in resp.text
