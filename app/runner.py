@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 
@@ -235,6 +236,9 @@ def main() -> int:
     analyzer는 주입하지 않는다 — run_pipeline이 키 유무로 알아서 만든다(빠른 경로와 일관).
     종료코드: 정상 0, 다른 일일 실행이 진행 중이면 비0(DailyRunAlreadyRunning).
     """
+    # Windows cp949 stdout이 비-ASCII(한글·em dash) print에 죽는 것 방지. typeshed가 sys.stdout을
+    # TextIO로 봐 reconfigure를 모름(TextIOWrapper엔 있음) → union-attr 무시.
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # crtfc_key 노출 방지(CLAUDE.md)
 
