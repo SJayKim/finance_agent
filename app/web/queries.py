@@ -8,13 +8,22 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
-from app.models import BriefItem, BriefItemTicker, Citation, RawDocument
+from app.models import (
+    AuditLog,
+    BriefItem,
+    BriefItemTicker,
+    Citation,
+    DailyDigest,
+    DigestSource,
+    RawDocument,
+)
 
 
 @dataclass(frozen=True)
@@ -116,3 +125,155 @@ def load_brief(session: Session, brief_date: date) -> list[BriefView]:
         )
         for item in items
     ]
+
+
+def search_citation_spans(
+    session: Session, query_vec: Sequence[float], top_k: int = 8
+) -> list[CitationView]:
+    """질문 벡터로 **누적 코퍼스 전체**의 인용 span을 코사인 유사도로 검색 (§4 트랙 D2).
+
+    하루치 load_brief와 달리 날짜 필터가 없다 — 전 날짜 citations를 가로질러(cross-date)
+    검색한다. 검색 대상은 citations(cited_text) — 이미 zero-fabrication ground truth라
+    검색이 경계를 깨지 않는다(§D: 검색은 무엇을 먹일지만 바꾼다). raw_documents에 join해
+    임베딩 있는 문서만(embedding IS NOT NULL) 후보로 두고, RawDocument.embedding의
+    cosine_distance(HNSW vector_cosine_ops 인덱스)로 가까운 순 top_k를 가져온다.
+
+    같은 (url, cited_text)는 가까운 순서를 유지하며 한 번만 반환(링크 중복 제거).
+    """
+    rows = session.execute(
+        select(Citation, RawDocument.url, RawDocument.title)
+        .join(RawDocument, RawDocument.id == Citation.raw_document_id)
+        .where(RawDocument.embedding.is_not(None))
+        .order_by(RawDocument.embedding.cosine_distance(query_vec))
+        .limit(top_k)
+    )
+    views: list[CitationView] = []
+    seen: set[tuple[str | None, str]] = set()
+    for cit, url, title in rows:
+        key = (url, cit.cited_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        views.append(
+            CitationView(
+                cited_text=cit.cited_text,
+                source_published_at=cit.source_published_at,
+                url=url,
+                title=title,
+            )
+        )
+    return views
+
+
+def _section_label(section: str) -> str:
+    """raw section('macro' | 'sector:<name>')을 한국어 라벨로 휴머나이즈 (§4 트랙 E)."""
+    if section == "macro":
+        return "거시"
+    if section.startswith("sector:"):
+        return section[len("sector:") :]
+    return section
+
+
+@dataclass(frozen=True)
+class DigestView:
+    """일일 다이제스트 섹션 1건 (§7). source_brief_item_ids → 근거 brief_item 역추적."""
+
+    section_label: str
+    raw_section: str
+    heading: str | None
+    body_text: str | None
+    status: str
+    source_brief_item_ids: list[int]
+
+
+def load_digest(session: Session, brief_date: date) -> list[DigestView]:
+    """해당 brief_date의 일일 다이제스트 섹션을 거시 먼저, 그다음 섹터 순으로 조립 (§7).
+
+    각 섹션의 근거 brief_item id는 digest_sources에서 묶는다. 행이 없으면 빈 리스트.
+    """
+    macro_first = case((DailyDigest.section == "macro", 0), else_=1)
+    digests = (
+        session.execute(
+            select(DailyDigest)
+            .where(DailyDigest.brief_date == brief_date)
+            .order_by(macro_first, DailyDigest.section)
+        )
+        .scalars()
+        .all()
+    )
+    if not digests:
+        return []
+
+    ids = [d.id for d in digests]
+    sources_by_digest: dict[int, list[int]] = defaultdict(list)
+    for digest_id, brief_item_id in session.execute(
+        select(DigestSource.digest_id, DigestSource.brief_item_id)
+        .where(DigestSource.digest_id.in_(ids))
+        .order_by(DigestSource.brief_item_id)
+    ):
+        sources_by_digest[digest_id].append(brief_item_id)
+
+    return [
+        DigestView(
+            section_label=_section_label(d.section),
+            raw_section=d.section,
+            heading=d.heading,
+            body_text=d.body_text,
+            status=d.status,
+            source_brief_item_ids=sources_by_digest[d.id],
+        )
+        for d in digests
+    ]
+
+
+@dataclass(frozen=True)
+class SourceStatus:
+    """일일 실행에서 소스 1건의 수집 결과 (§8.6 투명성)."""
+
+    name: str
+    status: str
+    attempted: int
+    error: str | None
+
+
+@dataclass(frozen=True)
+class SourceHealthView:
+    """가장 최근 daily_run의 소스 헬스 + 다이제스트 상태 + 실행 시각 (§4 트랙 B / §8.6)."""
+
+    sources: list[SourceStatus]
+    digest_status: str
+    ran_at: datetime
+
+
+def load_source_health(session: Session, brief_date: date) -> SourceHealthView | None:
+    """해당 brief_date의 가장 최근 daily_run audit_log 1건을 소스 헬스 뷰로 파싱 (§8.6).
+
+    payload->>'brief_date' == brief_date.isoformat()인 행 중 ts 내림차순 최신 1건. 없으면 None.
+    """
+    row = session.execute(
+        select(AuditLog)
+        .where(
+            AuditLog.action == "daily_run",
+            AuditLog.payload.op("->>")("brief_date") == brief_date.isoformat(),
+        )
+        .order_by(AuditLog.ts.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+
+    payload = row.payload or {}
+    sources = [
+        SourceStatus(
+            name=s.get("name", ""),
+            status=s.get("status", ""),
+            attempted=s.get("attempted", 0),
+            error=s.get("error"),
+        )
+        for s in payload.get("sources", [])
+    ]
+    return SourceHealthView(
+        sources=sources,
+        digest_status=payload.get("digest_status", ""),
+        ran_at=row.ts,
+    )

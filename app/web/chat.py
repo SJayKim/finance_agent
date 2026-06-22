@@ -17,8 +17,10 @@ from typing import Any, cast
 
 import anthropic
 from anthropic.types import MessageParam
+from sqlalchemy.orm import Session
 
-from app.web.queries import BriefView
+from app.embed import Embedder
+from app.web.queries import BriefView, CitationView, search_citation_spans
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,9 @@ class ChatAnswer:
 
 # 라우트·테스트가 주입하는 I/O 경계. 키 없으면 None(=비활성).
 ChatAnalyzer = Callable[[str, Sequence[BriefView]], ChatAnswer | None]
+
+# 누적 RAG 경로(§4 트랙 D2). 키·임베더 중 하나라도 없으면 None(=비활성).
+RagChatAnalyzer = Callable[[Session, str], ChatAnswer | None]
 
 
 _CHAT_SYSTEM = (
@@ -139,6 +144,53 @@ def anthropic_chat(client: anthropic.Anthropic, model: str) -> ChatAnalyzer:
         text, citations = _parse_chat(resp.content, sources)
         if not citations:
             return None  # 근거 인용 0 → 거부(§7 정책 일관)
+        return ChatAnswer(text=text, citations=citations)
+
+    return answer
+
+
+def _sources_from_citation_views(views: Sequence[CitationView]) -> list[_ChatSource]:
+    """검색 결과 CitationView들 → citable _ChatSource 리스트(이 순서가 document_index)."""
+    return [_ChatSource(cited_text=v.cited_text, url=v.url, title=v.title) for v in views]
+
+
+def anthropic_rag_chat(
+    client: anthropic.Anthropic, model: str, embedder: Embedder
+) -> RagChatAnalyzer:
+    """누적 RAG 근거기반 채팅 분석기(§4 트랙 D2). 질문을 임베딩해 전 날짜 인용 코퍼스를 검색해
+    고른 cited_text span만 Citations API에 먹인다 — 검색은 무엇을 먹일지만 바꾸고, 신뢰 경계는
+    하루치 채팅과 동일(인용 0 → 거부). 검색 결과 0/장애 시 None(라우트 → '관련 근거 없음').
+    """
+
+    def answer(session: Session, question: str) -> ChatAnswer | None:
+        vec = embedder.embed([question])[0]
+        views = search_citation_spans(session, vec, top_k=8)
+        if not views:
+            return None  # 코퍼스에 임베딩된 인용이 없거나 관련 근거 없음
+        sources = _sources_from_citation_views(views)
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=1024,
+                system=_CHAT_SYSTEM,
+                messages=cast(
+                    "list[MessageParam]",
+                    [
+                        {
+                            "role": "user",
+                            "content": [
+                                *_chat_documents(sources),
+                                {"type": "text", "text": question},
+                            ],
+                        }
+                    ],
+                ),
+            )
+        except anthropic.APIError:
+            return None
+        text, citations = _parse_chat(resp.content, sources)
+        if not citations:
+            return None  # 근거 인용 0 → 거부(§7 정책 일관, 검색은 무엇을 먹일지만 바꾼다)
         return ChatAnswer(text=text, citations=citations)
 
     return answer

@@ -18,6 +18,10 @@ dependencies = [
     "truststore>=0.10.4",
 ]
 
+# 임베딩(bge-m3 등)은 opt-in: uv sync --extra embeddings (코어 uv sync는 가볍게 유지).
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=3"]
+
 [dependency-groups]
 dev = [
     "ruff",

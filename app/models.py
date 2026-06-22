@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -44,6 +45,13 @@ class RawDocument(Base):
     __tablename__ = "raw_documents"
     __table_args__ = (
         UniqueConstraint("source_id", "external_id", name="uq_raw_documents_source_external"),
+        # 정규화된 문장 임베딩의 RAG 코사인 유사도 검색용 HNSW 인덱스(0003). 차원은 Vector(1024).
+        Index(
+            "ix_raw_documents_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -57,7 +65,8 @@ class RawDocument(Base):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    # dim 1024 = bge-m3/e5-large 권장군 (config.embedding_dim와 일치해야 함; 차원 변경 시 재임베딩+마이그레이션 필요).
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
 
 
 class Cluster(Base):
@@ -65,7 +74,8 @@ class Cluster(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     brief_date: Mapped[date] = mapped_column(Date)
-    centroid: Mapped[list[float] | None] = mapped_column(Vector(), nullable=True)
+    # dim 1024 = bge-m3/e5-large 권장군 (config.embedding_dim와 일치해야 함; 차원 변경 시 재임베딩+마이그레이션 필요).
+    centroid: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     representative_doc_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw_documents.id"), nullable=True
     )
@@ -154,3 +164,31 @@ class AuditLog(Base):
     actor: Mapped[str | None] = mapped_column(String, nullable=True)
     action: Mapped[str] = mapped_column(String)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class DailyDigest(Base):
+    """일일 다이제스트 섹션 (STAGE1.5_DESIGN §7). (brief_date, section)당 1행, upsert 멱등."""
+
+    __tablename__ = "daily_digests"
+    __table_args__ = (
+        UniqueConstraint("brief_date", "section", name="uq_daily_digests_date_section"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    brief_date: Mapped[date] = mapped_column(Date)
+    section: Mapped[str] = mapped_column(
+        String
+    )  # 'macro' | 'sector:<섹터명>' (taxonomy STAGE0-BLOCKED)
+    heading: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String)  # ok | degraded | empty
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DigestSource(Base):
+    __tablename__ = "digest_sources"
+
+    digest_id: Mapped[int] = mapped_column(ForeignKey("daily_digests.id"), primary_key=True)
+    brief_item_id: Mapped[int] = mapped_column(ForeignKey("brief_items.id"), primary_key=True)

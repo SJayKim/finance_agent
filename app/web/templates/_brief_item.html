@@ -1,4 +1,4 @@
-<details class="brief-item status-{{ b.status }}">
+<details class="brief-item status-{{ b.status }}" id="brief-{{ b.id }}">
   <summary>
     <span class="event-type">{{ b.event_type or "미분류" }}</span>
     {% if b.direction %}<span class="direction dir-{{ b.direction }}">{{ b.direction }}</span>{% endif %}

@@ -1,0 +1,13 @@
+{% if health %}
+<section class="source-health">
+  <ul class="source-chips">
+    {% for s in health.sources %}
+    <li class="chip {{ 'ok' if s.status == 'ok' else 'error' }}">
+      <span class="src-name">{{ s.name }}</span>
+      {% if s.status != "ok" %}<span class="src-error">{{ s.status }}{% if s.error %} — {{ s.error }}{% endif %}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="source-meta">다이제스트 {{ health.digest_status }} · 실행 {{ health.ran_at.strftime("%Y-%m-%d %H:%M") }}</p>
+</section>
+{% endif %}

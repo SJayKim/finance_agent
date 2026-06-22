@@ -14,7 +14,13 @@
       <p class="meta">
         {{ brief_date.isoformat() }} (KST){% if last_updated %} · 마지막 업데이트 {{ last_updated.strftime("%Y-%m-%d %H:%M") }}{% endif %}
       </p>
+      <nav class="date-nav">
+        <a href="/?date={{ prev_date }}">← {{ prev_date }}</a>
+        <a href="/?date={{ next_date }}">{{ next_date }} →</a>
+      </nav>
     </header>
+
+    {% include "_source_health.html" %}
 
     <section class="chat">
       {% if chat_enabled %}
@@ -22,12 +28,19 @@
         <input type="hidden" name="date" value="{{ brief_date.isoformat() }}" />
         <input type="text" name="q" placeholder="이 브리프에 근거해 질문하세요" autocomplete="off" />
         <button type="submit">질문</button>
+        <fieldset class="scope">
+          <label><input type="radio" name="scope" value="date" checked /> 이 날짜</label>
+          <label><input type="radio" name="scope" value="cumulative" /> 전체 누적</label>
+        </fieldset>
       </form>
+      <p class="scope-hint">전체 누적은 이 날짜뿐 아니라 누적된 전체 코퍼스를 검색합니다.</p>
       {% else %}
       <p class="chat-disabled">채팅 비활성 (ANTHROPIC_API_KEY 미설정)</p>
       {% endif %}
       <div id="chat-answer"></div>
     </section>
+
+    {% include "_digest.html" %}
 
     <section class="briefs">
       {% if briefs %}

@@ -33,6 +33,8 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 _ROOT = Path(__file__).resolve().parent.parent
 # TRUNCATE 순서는 CASCADE라 무관하지만 전 테이블을 한 번에 비운다(멱등 격리).
 _TABLES = (
+    "digest_sources",
+    "daily_digests",
     "brief_item_tickers",
     "citations",
     "brief_items",

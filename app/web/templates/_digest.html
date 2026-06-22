@@ -1,0 +1,23 @@
+<section class="digest">
+  <h2>일일 다이제스트</h2>
+  {% if digest %}
+    {% for d in digest %}
+    <article class="digest-card status-{{ d.status }}">
+      <h3>
+        <span class="section-label">{{ d.section_label }}</span>
+        {% if d.heading %}<span class="heading">{{ d.heading }}</span>{% endif %}
+        {% if d.status == "empty" %}<span class="badge empty">근거 없음</span>{% endif %}
+        {% if d.status == "degraded" %}<span class="badge degraded">일부 소스 누락</span>{% endif %}
+      </h3>
+      {% if d.body_text %}<p class="digest-body">{{ d.body_text }}</p>{% endif %}
+      {% if d.source_brief_item_ids %}
+      <p class="digest-sources">
+        {% for id in d.source_brief_item_ids %}<a href="#brief-{{ id }}">근거 #{{ id }}</a>{% endfor %}
+      </p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  {% else %}
+    <p class="empty">다이제스트 없음</p>
+  {% endif %}
+</section>

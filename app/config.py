@@ -10,9 +10,11 @@ class Settings(BaseSettings):
     # 저장소
     database_url: str = "postgresql+psycopg://localhost/finance_agent"
 
-    # 임베딩 (§11.3 OPEN — 모델/차원 미정. 인터페이스 경계로만 노출, 확정 전 빈 값)
-    embedding_model: str | None = None
-    embedding_dim: int | None = None
+    # 임베딩 (§6 권장 시작점: bge-m3, dim 1024, 로컬 다국어). 차원은 models.Vector(1024)와
+    # 고정 일치 — 모델 교체로 차원이 바뀌면 마이그레이션+전체 재임베딩 필요. .env로 오버라이드 가능.
+    embedding_model: str | None = "BAAI/bge-m3"
+    embedding_dim: int = 1024
+    embedding_device: str = "cpu"  # bge-m3 디바이스; GPU 있으면 "cuda"
 
     # 신선도 윈도우 (§5.7) — published_at 기준 필터. 시간 단위.
     freshness_window_hours: int = 24

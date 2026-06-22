@@ -18,7 +18,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
+from app.embed import Embedder
 from app.models import (
     BriefItem,
     BriefItemTicker,
@@ -35,6 +36,7 @@ from app.pipeline.citations import (
     build_client,
 )
 from app.pipeline.dedup import near_duplicate_groups
+from app.pipeline.embed import embed_documents
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
 
 
@@ -162,9 +164,7 @@ def load_aliases(session: Session) -> dict[str, list[tuple[str, str]]]:
     별칭은 소문자로 묶는다(resolve 계약). 같은 별칭이 여러 종목이면 중의적 후보 목록.
     """
     dictionary: dict[str, list[tuple[str, str]]] = {}
-    rows = session.execute(
-        select(SecurityAlias.alias, SecurityAlias.ticker, SecurityAlias.market)
-    )
+    rows = session.execute(select(SecurityAlias.alias, SecurityAlias.ticker, SecurityAlias.market))
     for alias, ticker, market in rows:
         dictionary.setdefault(alias.lower(), []).append((ticker, market))
     return dictionary
@@ -263,8 +263,9 @@ def run_pipeline(
     dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
     freshness_window_hours: int = settings.freshness_window_hours,
     analyzer: ImpactAnalyzer | None = None,
+    embedder: Embedder | None = None,
 ) -> None:
-    """일간 브리프 파이프라인 1회 실행: dedup → cluster → generate_impact(골격) → analyze_impact(§7) → ticker_link.
+    """일간 브리프 파이프라인 1회 실행: dedup → cluster → generate_impact(골격) → analyze_impact(§7) → ticker_link → embed.
 
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
@@ -274,13 +275,21 @@ def run_pipeline(
     analyzer 미주입 시 settings.anthropic_api_key가 있으면 실 Anthropic 2-패스 분석기를 만들고,
     없으면 None(analyze_impact 비활성 — brief_item status=empty 유지). 테스트는 가짜 분석기를
     주입해 네트워크 없이 적재를 검증한다.
+    embedder는 analyzer와 달리 자동 생성하지 않는다 — 실 모델(~2GB)이 /trigger·테스트에서
+    로드되지 않게. 일일 오케스트레이터가 get_embedder()로 명시 주입할 때만 embed 단계가
+    돈다(None이면 no-op). embed는 영향도 분석에 의존하지 않으므로 마지막에 둔다.
     """
     if analyzer is None and settings.anthropic_api_key:
         analyzer = anthropic_analyzer(
             build_client(settings.anthropic_api_key), settings.impact_model
         )
-    with SessionLocal() as session:
-        acquired = session.execute(
+    # 어드바이저리 락은 연결(세션) 단위다. 락은 전용 연결(lock_conn)에 고정해 잡고 푼다 —
+    # 작업 세션에서 잡고 session.commit() 뒤 finally에서 풀면, 커밋이 연결을 풀에 반납하고
+    # 언락이 다른 연결에서 돌아 락이 안 풀린 채 풀에 남는다(누수 → 후속 run_pipeline이
+    # PipelineAlreadyRunning). lock_conn을 끝까지 열어두면 같은 연결에서 잡고/풀고, 닫힐 때
+    # 남은 락도 정리된다. 작업은 별도 세션에서 한다.
+    with engine.connect() as lock_conn:
+        acquired = lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": _PIPELINE_LOCK_KEY}
         ).scalar()
         if not acquired:
@@ -288,12 +297,16 @@ def run_pipeline(
                 f"run_pipeline already running (lock {_PIPELINE_LOCK_KEY})"
             )
         try:
-            dedup(session, brief_date, freshness_window_hours)
-            cluster(session, brief_date, freshness_window_hours)
-            generate_impact(session, brief_date)
-            analyze_impact(session, brief_date, analyzer)
-            aliases = dictionary if dictionary is not None else load_aliases(session)
-            ticker_link(session, brief_date, aliases, openfigi_normalizer)
-            session.commit()
+            with SessionLocal() as session:
+                dedup(session, brief_date, freshness_window_hours)
+                cluster(session, brief_date, freshness_window_hours)
+                generate_impact(session, brief_date)
+                analyze_impact(session, brief_date, analyzer)
+                aliases = dictionary if dictionary is not None else load_aliases(session)
+                ticker_link(session, brief_date, aliases, openfigi_normalizer)
+                embed_documents(session, embedder)  # embedder 미주입 시 no-op(모델 미로드)
+                session.commit()
         finally:
-            session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY})
+            lock_conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY}
+            )

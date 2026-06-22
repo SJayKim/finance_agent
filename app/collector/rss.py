@@ -1,9 +1,9 @@
-"""코인 뉴스 RSS 커넥터 (STAGE1_DESIGN §5.8 RSS 티어).
+"""뉴스 RSS 커넥터 (STAGE1_DESIGN §5.8 RSS 티어 + STAGE1.5 §4 Track A).
 
-CoinTelegraph · CoinDesk · Decrypt 퍼블리셔 신디케이션 피드. 합법 경계(P5):
-본문 직접 크롤링 금지 — 피드가 주는 헤드라인+요약+링크까지만(body=None).
-키 불필요. parse_feed/normalize는 순수 함수(네트워크·DB 없이 테스트 가능),
-fetch/upsert만 I/O.
+크립토(CoinTelegraph·CoinDesk·Decrypt) · KR 경제지(한경·매경) · 글로벌 매크로
+(연준·ECB·로이터) 퍼블리셔 신디케이션 피드. 합법 경계(P5): 본문 직접 크롤링
+금지 — 피드가 주는 헤드라인+요약+링크까지만(body=None). 키 불필요.
+parse_feed/normalize는 순수 함수(네트워크·DB 없이 테스트 가능), fetch/upsert만 I/O.
 """
 
 from __future__ import annotations
@@ -26,11 +26,20 @@ from app.collector.base import Connector, NormalizedDoc
 from app.db import SessionLocal
 from app.models import RawDocument, Source
 
-# §5.8 RSS 티어: source 이름 → 피드 URL.
-DEFAULT_FEEDS: dict[str, str] = {
-    "cointelegraph": "https://cointelegraph.com/rss",
-    "coindesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "decrypt": "https://decrypt.co/feed",
+# §5.8 RSS 티어 + STAGE1.5 §4 Track A: source 이름 → {url, lang}.
+DEFAULT_FEEDS: dict[str, dict[str, str]] = {
+    # 크립토 (en): §5.8 3종 퍼블리셔
+    "cointelegraph": {"url": "https://cointelegraph.com/rss", "lang": "en"},
+    "coindesk": {"url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "lang": "en"},
+    "decrypt": {"url": "https://decrypt.co/feed", "lang": "en"},
+    # KR 경제지 (ko): 한국경제·매일경제 퍼블릭 RSS
+    "hankyung": {"url": "https://www.hankyung.com/feed/economy", "lang": "ko"},
+    "maeil": {"url": "https://www.mk.co.kr/rss/30100041/", "lang": "ko"},  # 매경 경제
+    # 글로벌 매크로 (en): 연준·ECB·로이터
+    "federalreserve": {"url": "https://www.federalreserve.gov/feeds/press_all.xml", "lang": "en"},
+    "ecb": {"url": "https://www.ecb.europa.eu/rss/press.html", "lang": "en"},
+    # 로이터 퍼블릭 RSS는 불안정 — 동작 안 하면 조정 필요.
+    "reuters": {"url": "https://feeds.reuters.com/reuters/businessNews", "lang": "en"},
 }
 
 _TAG = re.compile(r"<[^>]+>")
@@ -48,7 +57,7 @@ def _strip_html(value: str | None) -> str | None:
     return html.unescape(_TAG.sub("", value)).strip() or None
 
 
-def parse_feed(source: str, xml_bytes: bytes) -> list[dict[str, Any]]:
+def parse_feed(source: str, lang: str, xml_bytes: bytes) -> list[dict[str, Any]]:
     """RSS 2.0 XML → item 원시 dict 리스트 (순수). external_id = guid 우선, 없으면 link."""
     root = ET.fromstring(xml_bytes)
     items = []
@@ -58,6 +67,7 @@ def parse_feed(source: str, xml_bytes: bytes) -> list[dict[str, Any]]:
         items.append(
             {
                 "source": source,
+                "lang": lang,
                 "external_id": guid or link,
                 "title": _text(item, "title"),
                 "description": _text(item, "description"),
@@ -69,17 +79,17 @@ def parse_feed(source: str, xml_bytes: bytes) -> list[dict[str, Any]]:
 
 
 class RssConnector(Connector):
-    def __init__(self, feeds: dict[str, str] | None = None) -> None:
+    def __init__(self, feeds: dict[str, dict[str, str]] | None = None) -> None:
         self.feeds = feeds if feeds is not None else DEFAULT_FEEDS
 
     def fetch(self) -> Iterable[dict[str, Any]]:
         # OS 인증서 저장소 신뢰 (사내 TLS 가로채기 대응; uv --system-certs의 httpx판).
         ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         with httpx.Client(timeout=20.0, follow_redirects=True, verify=ctx) as client:
-            for source, url in self.feeds.items():
-                resp = client.get(url)
+            for source, meta in self.feeds.items():
+                resp = client.get(meta["url"])
                 resp.raise_for_status()
-                yield from parse_feed(source, resp.content)
+                yield from parse_feed(source, meta["lang"], resp.content)
 
     def normalize(self, payload: dict[str, Any]) -> NormalizedDoc:
         pub_raw = payload.get("pubDate")
@@ -97,7 +107,7 @@ class RssConnector(Connector):
             summary=_strip_html(payload.get("description")),
             body=None,  # P5: RSS는 본문 grounding 불가
             url=payload.get("link"),
-            lang="en",  # §5.8 3종은 영어 퍼블리셔
+            lang=payload.get("lang", "en"),  # 피드별 lang (KR=ko, 글로벌 매크로=en)
             raw_payload=payload,
         )
 
