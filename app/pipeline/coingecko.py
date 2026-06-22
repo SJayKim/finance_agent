@@ -35,7 +35,7 @@ _UNIVERSE = frozenset(
         "chainlink",
         "ondo-finance",
         "pendle",
-        "mantra-dao",
+        "mantra",
         "centrifuge",
     }
 )
