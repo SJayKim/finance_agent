@@ -131,6 +131,21 @@ class Coverage(Base):
     market: Mapped[str] = mapped_column(String)  # KR | US | CRYPTO
 
 
+class SecurityAlias(Base):
+    """티커 링킹(§6.4) 별칭 사전 레퍼런스: alias(회사명/별칭) → (ticker, market).
+
+    §9 coverage와 다른 축이다: '무엇을 커버하나'가 아니라 '텍스트에서 종목을 어떻게
+    알아보나'. ticker_link가 이 테이블에서 사전을 적재한다(§2: 유니버스를 코드에 박지
+    않고 DB 상태로 흐르게). 빈 테이블이면 링크 0건(정직). 같은 alias가 여러 종목이면 중의적.
+    """
+
+    __tablename__ = "security_aliases"
+
+    alias: Mapped[str] = mapped_column(String, primary_key=True)
+    ticker: Mapped[str] = mapped_column(String, primary_key=True)
+    market: Mapped[str] = mapped_column(String, primary_key=True)  # KR | US | CRYPTO
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 

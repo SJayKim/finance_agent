@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument
+from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument, SecurityAlias
 from app.pipeline.dedup import near_duplicate_groups
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
 
@@ -123,6 +123,21 @@ def ticker_link(
             )
 
 
+def load_aliases(session: Session) -> dict[str, list[tuple[str, str]]]:
+    """security_aliases 테이블 → resolve()용 별칭 사전 (§6.4 배선 실체화).
+
+    빈 테이블이면 빈 dict → 링크 0건(§2: 유니버스를 코드에 박지 않고 DB 상태로 흐르게).
+    별칭은 소문자로 묶는다(resolve 계약). 같은 별칭이 여러 종목이면 중의적 후보 목록.
+    """
+    dictionary: dict[str, list[tuple[str, str]]] = {}
+    rows = session.execute(
+        select(SecurityAlias.alias, SecurityAlias.ticker, SecurityAlias.market)
+    )
+    for alias, ticker, market in rows:
+        dictionary.setdefault(alias.lower(), []).append((ticker, market))
+    return dictionary
+
+
 def event_classify() -> None:
     raise NotImplementedError
 
@@ -159,7 +174,8 @@ def run_pipeline(
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
     cluster·event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
-    dictionary 미주입 시 빈 사전(링크 0건) — 유니버스 하드코딩 금지(§2).
+    dictionary 미주입 시 security_aliases 테이블에서 적재(빈 테이블 → 0건) — 유니버스
+    하드코딩 금지(§2). 명시 주입(테스트 등)은 그대로 사용.
     """
     with SessionLocal() as session:
         acquired = session.execute(
@@ -170,7 +186,8 @@ def run_pipeline(
         try:
             dedup(session, brief_date, freshness_window_hours)
             generate_impact(session, brief_date)
-            ticker_link(session, brief_date, dictionary or {}, openfigi_normalizer)
+            aliases = dictionary if dictionary is not None else load_aliases(session)
+            ticker_link(session, brief_date, aliases, openfigi_normalizer)
             session.commit()
         finally:
             session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY})
