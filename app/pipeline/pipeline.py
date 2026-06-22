@@ -20,6 +20,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.models import BriefItem, BriefItemTicker, Cluster, ClusterMember, RawDocument, SecurityAlias
 from app.pipeline.dedup import near_duplicate_groups
+from app.pipeline.impact import analyze_impact
 from app.pipeline.ticker_link import openfigi_normalizer, resolve
 
 
@@ -169,11 +170,13 @@ def run_pipeline(
     dictionary: Mapping[str, list[tuple[str, str]]] | None = None,
     freshness_window_hours: int = settings.freshness_window_hours,
 ) -> None:
-    """일간 브리프 파이프라인 1회 실행. 현재: dedup → generate_impact(골격) → ticker_link.
+    """일간 브리프 파이프라인 1회 실행. 현재: dedup → generate_impact(골격) →
+    ticker_link → analyze_impact(§7 2-패스 Citations).
 
     §6 설계 순서는 ticker-link → ... → 영향도생성이나, brief_item_tickers가 brief_items
     FK라 brief_items를 먼저 만들어야 한다 → generate_impact를 ticker_link보다 앞에 둔다.
-    cluster·event_classify·§7 Citations 분석은 구현되는 대로 순서대로 추가한다.
+    analyze_impact는 generate_impact가 만든 status=empty 항목을 채운다(클러스터당 Opus
+    2-패스 호출). cluster·event_classify는 구현되는 대로 순서대로 추가한다.
     dictionary 미주입 시 security_aliases 테이블에서 적재(빈 테이블 → 0건) — 유니버스
     하드코딩 금지(§2). 명시 주입(테스트 등)은 그대로 사용.
     """
@@ -188,6 +191,7 @@ def run_pipeline(
             generate_impact(session, brief_date)
             aliases = dictionary if dictionary is not None else load_aliases(session)
             ticker_link(session, brief_date, aliases, openfigi_normalizer)
+            analyze_impact(session, brief_date)
             session.commit()
         finally:
             session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY})
