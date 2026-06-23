@@ -25,7 +25,7 @@
 
 ```cmd
 schtasks /Create /TN "finance_agent_daily" /SC DAILY /ST 06:40 ^
-  /TR "cmd /c cd /d C:\Users\호두주인\Desktop\finance_agent && uv run python -m app.runner >> logs\daily.log 2>&1"
+  /TR "cmd /c cd /d C:\Users\cyon1\OneDrive\Desktop\finance_agent && uv run python -m app.runner >> logs\daily.log 2>&1"
 ```
 
 - `/SC DAILY /ST 06:40` — 매일 06:40(작업 스케줄러는 OS 로컬 TZ를 쓴다; PC가 KST면 06:40 KST).

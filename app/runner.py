@@ -30,7 +30,7 @@ from app.collector.base import Connector
 from app.collector.edgar_docs import EdgarDocsConnector
 from app.collector.finnhub import FinnhubConnector
 from app.collector.marketaux import MarketauxConnector
-from app.collector.naver import DEFAULT_QUERIES, NaverNewsConnector
+from app.collector.naver import NaverNewsConnector, load_coverage_queries
 from app.collector.opendart_docs import OpenDartDocsConnector
 from app.collector.rss import RssConnector
 from app.config import settings
@@ -76,10 +76,15 @@ def build_default_connectors() -> list[tuple[str, Connector]]:
     EDGAR의 CIK 유니버스는 코드에 박지 않는다(§2: 유니버스는 DB/커버리지에서 흐른다).
     ciks=[]는 원칙적 placeholder — UA가 설정돼 있으면 빈 루프(no-op)이고, CIK 유니버스가
     DB/coverage에서 공급되기 전까지는 아무 문서도 가져오지 않는다. 무작위 CIK를 지어내지 않는다.
+
+    네이버 쿼리도 같은 원칙: coverage/security_aliases에서 도출한다(하드코딩 금지). 빈 DB →
+    빈 쿼리 → 네이버 no-op. 짧게 세션을 열어 읽는다(EDGAR ciks=[]와 대칭).
     """
+    with SessionLocal() as session:
+        naver_queries = load_coverage_queries(session)
     return [
         ("rss", RssConnector()),
-        ("naver", NaverNewsConnector(DEFAULT_QUERIES)),
+        ("naver", NaverNewsConnector(naver_queries)),
         ("opendart_docs", OpenDartDocsConnector()),
         ("edgar_docs", EdgarDocsConnector(ciks=[])),  # CIK 유니버스는 DB/커버리지에서(§2)
         ("marketaux", MarketauxConnector()),

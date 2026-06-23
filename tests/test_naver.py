@@ -3,9 +3,16 @@ from datetime import timezone
 
 import httpx
 import pytest
+from sqlalchemy.orm import sessionmaker
 
-from app.collector.naver import NaverError, NaverNewsConnector, parse_news
+from app.collector.naver import (
+    NaverError,
+    NaverNewsConnector,
+    load_coverage_queries,
+    parse_news,
+)
 from app.config import settings
+from app.models import Coverage, SecurityAlias
 
 # title/description은 <b> 하이라이트 태그 + HTML 엔티티로 온다(실제 응답과 동일).
 # item 0: originallink 있음. item 1: originallink 빈 문자열 → link로 폴백.
@@ -82,3 +89,27 @@ def test_fetch_missing_keys_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "naver_client_secret", None)
     with pytest.raises(NaverError):
         list(NaverNewsConnector(["코스피"]).fetch())
+
+
+def test_load_coverage_queries_empty_db_returns_empty(db: sessionmaker) -> None:
+    """빈 coverage/별칭 → 빈 쿼리(네이버 no-op, EDGAR ciks=[]와 대칭)."""
+    with db() as session:
+        assert load_coverage_queries(session) == []
+
+
+def test_load_coverage_queries_derives_from_coverage_and_aliases(db: sessionmaker) -> None:
+    """섹터(non-null) ∪ 커버 종목의 별칭, 정렬·중복 제거. 커버 안 된 종목 별칭은 제외."""
+    with db() as session:
+        session.add_all(
+            [
+                Coverage(analyst_id="a1", ticker="005930", sector="반도체", market="KR"),
+                Coverage(analyst_id="a1", ticker=None, sector="금융", market="KR"),
+                # 커버 종목 005930의 별칭(2개) → 포함
+                SecurityAlias(alias="삼성전자", ticker="005930", market="KR"),
+                SecurityAlias(alias="Samsung", ticker="005930", market="KR"),
+                # 커버되지 않은 종목의 별칭 → 제외
+                SecurityAlias(alias="하이닉스", ticker="000660", market="KR"),
+            ]
+        )
+        session.commit()
+        assert load_coverage_queries(session) == ["Samsung", "금융", "반도체", "삼성전자"]
