@@ -1,8 +1,8 @@
-<details class="brief-item status-{{ b.status }}" id="brief-{{ b.id }}">
+<details class="brief-item status-{{ b.status }}" id="brief-{{ b.id }}"{% if b.direction %} data-dir="{{ {'긍정':'up','부정':'down','중립':'neutral'}.get(b.direction,'neutral') }}"{% endif %}>
   <summary>
     <span class="event-type">{{ b.event_type or "미분류" }}</span>
-    {% if b.direction %}<span class="direction dir-{{ b.direction }}">{{ b.direction }}</span>{% endif %}
-    {% if b.confidence %}<span class="confidence">{{ b.confidence }}</span>{% endif %}
+    {% if b.direction %}<span class="direction" data-dir="{{ {'긍정':'up','부정':'down','중립':'neutral'}.get(b.direction,'neutral') }}">{{ b.direction }}</span>{% endif %}
+    {% if b.confidence %}<span class="confidence" data-conf="{{ b.confidence }}">{{ b.confidence }}</span>{% endif %}
     {% if b.status == "degraded" %}<span class="badge degraded">일부 소스 누락</span>{% endif %}
     {% if b.status == "empty" %}<span class="badge empty">근거 없음</span>{% endif %}
   </summary>
