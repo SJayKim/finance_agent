@@ -51,12 +51,21 @@ def normalize() -> None:
     raise NotImplementedError
 
 
+_KST = timezone(timedelta(hours=9))  # brief_date는 KST 기준일(run_daily) — 컷오프도 KST로 앵커
+
+
 def _freshness_cutoff(brief_date: date, hours: int) -> datetime:
-    """brief_date 종일(UTC 다음날 00:00)에서 hours를 뺀 신선도 컷오프 (§5.7)."""
+    """brief_date 종일(KST 다음날 00:00)에서 hours를 뺀 신선도 컷오프 (§5.7).
+
+    brief_date는 KST 기준일이므로(run_daily가 datetime.now(_KST).date()로 산출) 종일
+    경계도 KST로 잡는다. UTC로 잡으면 KST 오전에 돌린 수집분(전날 저녁~당일 새벽 UTC
+    발행)이 컷오프 위로 밀려 통째로 잘려 클러스터가 0이 된다. 반환은 published_at(UTC
+    aware) 비교용으로 UTC aware로 정규화한다.
+    """
     end_of_day = datetime(
-        brief_date.year, brief_date.month, brief_date.day, tzinfo=timezone.utc
+        brief_date.year, brief_date.month, brief_date.day, tzinfo=_KST
     ) + timedelta(days=1)
-    return end_of_day - timedelta(hours=hours)
+    return (end_of_day - timedelta(hours=hours)).astimezone(timezone.utc)
 
 
 def _candidate_docs(session: Session, cutoff: datetime) -> list[tuple[int, str]]:

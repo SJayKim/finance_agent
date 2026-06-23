@@ -79,6 +79,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - SQLAlchemy `INSERT ... ON CONFLICT DO NOTHING`의 `result.rowcount`는 dialect가 multi-rowcount를 지원해도 **-1(신뢰 불가)**을 반환한다(실측: 3971건 적재에도 -1). 신규 적재 수가 필요하면 `.returning(<PK 컬럼>)` 붙이고 `len(session.execute(stmt).fetchall())`로 셀 것. (2026-06-22, app/pipeline/opendart.py sync)
 - API 키를 쿼리스트링으로 받는 외부 API(OpenDART `crtfc_key` 등)는 httpx INFO 로깅이 URL을 통째로 찍어 키를 노출한다. 러너에서 `logging.getLogger("httpx").setLevel(logging.WARNING)`로 억제할 것. (2026-06-22, app/pipeline/opendart.py main)
 - Windows CLI 진입점에서 비-ASCII(한글·em dash 등)를 `print`하면 cp949 stdout이 `UnicodeEncodeError`로 죽는다(실측: 소스 에러 메시지의 `—` → run_daily 데이터는 다 커밋됐는데 CLI가 exit 1). `main()` 진입부에서 `sys.stdout.reconfigure(encoding="utf-8")` 호출할 것. (2026-06-23, app/runner.py main)
+- `brief_date`는 KST 기준일(run_daily가 `datetime.now(_KST).date()`로 산출)이다. 날짜 경계·신선도 컷오프를 UTC 자정으로 잡으면 KST 오전에 돌린 수집분(전날 저녁~당일 새벽 UTC 발행)이 컷오프 위로 밀려 통째로 잘려 클러스터·브리프가 0이 된다(빈 다이제스트, 실측: 132건 수집에도 후보 0건). 종일 경계는 KST로 앵커할 것(`tzinfo=_KST`). (2026-06-23, app/pipeline/pipeline.py _freshness_cutoff)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->

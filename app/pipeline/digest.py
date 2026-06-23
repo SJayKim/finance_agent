@@ -208,34 +208,41 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                 return []
             pass2 = client.messages.create(
                 model=model,
-                max_tokens=2048,
+                max_tokens=4096,  # 2048은 브리프 많은 날 JSON이 잘려(Unterminated string) 파싱 실패
                 system=_PASS2_SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
             )
             data = json.loads(_first_text(pass2.content) or "{}")
-            sections: list[DigestSection] = []
+            # 같은 section 키로 여러 테마를 돌려줄 수 있다(예: 크립토 일색인 날 전부 "macro").
+            # uq_daily_digests_date_section은 (brief_date, section) 유일을 강제하므로 키별로
+            # 합친다 — body_text는 이어붙이고 첫 heading을 유지(모델 출력만 사용, 무근거 생성 X).
+            sections: dict[str, DigestSection] = {}
             for raw in data.get("sections") or []:
                 section = raw.get("section")
                 body_text = raw.get("body_text")
                 if not section or not body_text:
                     continue
+                if section in sections:
+                    prev = sections[section]
+                    body_text = f"{prev.body_text}\n\n{body_text}"
+                    heading = prev.heading
+                else:
+                    heading = raw.get("heading")
                 # 판단: 패스2는 패스1 텍스트+인용만 보고 섹션을 나누므로 인용을 섹션별로
                 # 깔끔히 분배하지 못한다. 충실·안전하게 패스1의 전체 인용 + 전체 근거
                 # brief_item을 각 섹션에 붙인다(섹션별 인용 귀속을 지어내지 않음). 모든
                 # 섹션은 그날 실제 인용 집합 안에 있으므로 zero-fabrication 경계는 유지된다.
-                sections.append(
-                    DigestSection(
-                        section=section,
-                        heading=raw.get("heading"),
-                        body_text=body_text,
-                        citations=list(citations),
-                        source_brief_item_ids=list(source_ids),
-                    )
+                sections[section] = DigestSection(
+                    section=section,
+                    heading=heading,
+                    body_text=body_text,
+                    citations=list(citations),
+                    source_brief_item_ids=list(source_ids),
                 )
-            return sections
-        except anthropic.APIError:
-            return None  # 쿼터 소진·장애 → degraded
+            return list(sections.values())
+        except (anthropic.APIError, json.JSONDecodeError):
+            return None  # 쿼터·장애 또는 잘린/깨진 JSON → degraded(build_digest 크래시 금지)
 
     return digest
 
