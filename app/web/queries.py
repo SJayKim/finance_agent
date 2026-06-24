@@ -138,7 +138,7 @@ class BoardRow:
     brief_id: int
     group_label: str  # "G1" 등 (날짜 내 클러스터 등장 순서)
     group_shape: str  # ●/▲/■ (색맹 구분용 모양 인코딩)
-    group_index: int  # 1.. (색 클래스 g1/g2/g3 선택)
+    group_index: int  # 1..N (색 클래스 g1..gN 선택; 팔레트 크기로 순환 — 모양과 같은 주기)
     impact_score: int
     direction: str | None
     event_type: str | None
@@ -171,7 +171,7 @@ def rank_board(briefs: Sequence[BriefView]) -> list[BoardRow]:
                 brief_id=b.id,
                 group_label=f"G{gi}",
                 group_shape=_GROUP_SHAPES[(gi - 1) % len(_GROUP_SHAPES)],
-                group_index=gi,
+                group_index=(gi - 1) % len(_GROUP_SHAPES) + 1,
                 impact_score=b.impact_score or 0,
                 direction=b.direction,
                 event_type=b.event_type,
