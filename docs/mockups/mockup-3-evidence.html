@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>시안 3 — 근거-퍼스트형</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@700&display=swap" />
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  main { max-width: 60rem; margin: 0 auto; padding: var(--sp-6) var(--sp-4); }
+  h1 { font-family: var(--font-display); font-size: var(--fs-6); margin: 0 0 var(--sp-1); }
+  .meta { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-2); margin: 0 0 var(--sp-5); }
+  /* 추천을 루트로, 근거를 트리로 — citation tree 전면화 */
+  .rec { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); box-shadow: var(--shadow); }
+  .rec-root { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap;
+    padding-bottom: var(--sp-3); border-bottom: 1px solid var(--border); }
+  .rec-tk { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-5); }
+  .rec-name { color: var(--text-2); }
+  .rec-root .fresh { margin-left: auto; }
+  .wiim { font-size: var(--fs-3); margin: var(--sp-3) 0; }
+  .wiim::before { content: "왜 이 종목인가 — "; color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-1); }
+  /* P1+분해 — ▲올린 / ▼내린 기여 요인 (트렌드1 XAI) */
+  .contrib { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin: var(--sp-3) 0; }
+  .col { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3); }
+  .col h3 { font-family: var(--font-mono); font-size: var(--fs-1); margin: 0 0 var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .col.up { background: var(--up-bg); } .col.up h3 { color: var(--up); }
+  .col.down { background: var(--down-bg); } .col.down h3 { color: var(--down); }
+  .col ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-2); }
+  /* 인용 트리 (시그니처 전면화) */
+  .tree-label { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-top: var(--sp-4); }
+  .citations { list-style: none; padding-left: var(--sp-2); margin: var(--sp-2) 0 0; }
+  .citations > li { position: relative; padding-left: var(--sp-5); padding-bottom: var(--sp-4); }
+  .citations > li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .citations > li::after { content: ""; position: absolute; left: 0; top: 0.8em; width: var(--sp-4); height: 2px; background: var(--border); }
+  .citations > li:last-child::before { bottom: auto; height: 0.8em; }
+  .ev-node { font-family: var(--font-mono); font-size: var(--fs-2); color: var(--text-1); font-weight: 600; }
+  blockquote { margin: var(--sp-2) 0 0; font-style: italic; border-left: 2px solid var(--accent); padding-left: var(--sp-3); color: var(--text-1); }
+  .cite-meta { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
+  .src-chip { font-family: var(--font-mono); font-size: var(--fs-1); padding: 0 var(--sp-2); border-radius: var(--radius-pill); }
+  .src-chip.official { background: var(--up-bg); color: var(--up); }
+  .src-chip.press { background: var(--accent-bg); color: var(--accent); }
+  .src-chip.blog { background: var(--neutral-bg); color: var(--text-3); }
+  /* P9 — 인과 타임라인 오버레이 (미니) */
+  .timeline { position: relative; height: 70px; margin: var(--sp-3) 0; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+  .timeline svg { display: block; width: 100%; height: 100%; }
+  .tl-cap { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="caption">시안 3 · <b>근거-퍼스트형</b> — 인용 트리를 시그니처로 전면화.
+    반영 개선안: <b>P1</b> "왜 이 종목" + 기여 요인 분해(▲올린/▼내린) · <b>P4</b> 소스 신뢰 칩 ·
+    <b>P9</b> 뉴스↔종목 인과 타임라인 오버레이. 추천=루트, 근거=가지.</p>
+
+  <h1>증거 브리프</h1>
+  <p class="meta">2026-06-24 (KST) · 추천은 투자 권유가 아니라 현재 뉴스 기준 영향도 분석입니다.</p>
+
+  <article class="rec">
+    <div class="rec-root">
+      <span class="rec-tk">005930</span>
+      <span class="rec-name">삼성전자 · KRX</span>
+      <span class="dir up">▲ 긍정</span>
+      <span class="conf high">신뢰 HIGH</span>
+      <span class="fresh recent">14분 전</span>
+    </div>
+
+    <p class="wiim">엔비디아 실적 서프라이즈 → HBM 수요 가속 → 메모리 3사 가격 협상력 강화의 수혜 후보.</p>
+
+    <div class="contrib">
+      <div class="col up">
+        <h3>▲ 상방 기여</h3>
+        <ul>
+          <li>엔비디아 데이터센터 매출 154%↑ (가중 0.42)</li>
+          <li>HBM 공급 부족 2026까지 지속 (가중 0.31)</li>
+          <li>모건스탠리 목표가 상향 (가중 0.12)</li>
+        </ul>
+      </div>
+      <div class="col down">
+        <h3>▼ 하방 기여</h3>
+        <ul>
+          <li>중국 메모리 증설 리스크 (가중 0.09)</li>
+          <li>환율 변동성 (가중 0.06)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="timeline">
+      <svg viewBox="0 0 600 70" preserveAspectRatio="none">
+        <polyline points="0,50 100,48 200,45 300,40 360,28 460,20 600,12" fill="none" stroke="#3fb950" stroke-width="2"/>
+        <line x1="360" y1="0" x2="360" y2="70" stroke="#e3a008" stroke-width="1" stroke-dasharray="3,3"/>
+        <circle cx="360" cy="28" r="4" fill="#e3a008"/>
+        <line x1="200" y1="0" x2="200" y2="70" stroke="#aeb9c7" stroke-width="1" stroke-dasharray="2,4"/>
+        <circle cx="200" cy="45" r="3" fill="#aeb9c7"/>
+      </svg>
+    </div>
+    <p class="tl-cap">● 06:40 NVDA 실적(트리거) · ● 07:55 HBM 뉴스 — 가격 반응을 시점 마커로 귀속 (P9, The Tie 오버레이)</p>
+
+    <p class="tree-label">근거 트리 (추천 → 이벤트 → 소스 + 발행시각)</p>
+    <ul class="citations">
+      <li>
+        <span class="ev-node">이벤트 · 실적 서프라이즈</span>
+        <blockquote>"엔비디아 데이터센터 부문 매출이 전년 대비 154% 증가하며 사상 최고치를 기록했다."</blockquote>
+        <div class="cite-meta">
+          <span class="src-chip official">공식·IR</span>
+          <span class="mono" style="color:var(--text-3)">NVIDIA IR · 06-24 06:40</span>
+          <span class="fresh live">신선</span>
+          <a href="#">원문 ↗</a>
+        </div>
+      </li>
+      <li>
+        <span class="ev-node">이벤트 · 공급망</span>
+        <blockquote>"HBM 공급 부족이 2026년까지 지속될 전망 — 메모리 3사 수혜."</blockquote>
+        <div class="cite-meta">
+          <span class="src-chip press">언론</span>
+          <span class="mono" style="color:var(--text-3)">연합인포맥스 · 06-24 07:55</span>
+          <span class="fresh recent">1시간</span>
+          <a href="#">원문 ↗</a>
+        </div>
+      </li>
+      <li>
+        <span class="ev-node">이벤트 · 애널리스트</span>
+        <blockquote>"모건스탠리, 메모리 업황 회복을 근거로 목표가 상향."</blockquote>
+        <div class="cite-meta">
+          <span class="src-chip blog">리서치 블로그</span>
+          <span class="mono" style="color:var(--text-3)">06-24 05:10</span>
+          <span class="fresh stale">3시간</span>
+          <a href="#">원문 ↗</a>
+        </div>
+      </li>
+    </ul>
+  </article>
+
+  <p class="caption"><b>설계 노트</b> — J2("믿어도 되나·신선한가")·J3("왜 움직이나")를 정면으로.
+    추천을 트리 루트로 두고 기여 요인을 ▲/▼로 분해(트렌드1 XAI), 소스 신뢰 칩(P4)·신선도(P2)로
+    근거의 질을 표면화. 인과 타임라인(P9)으로 "어느 뉴스가 언제 가격을 움직였나"를 귀속.
+    현 HTMX로 100% 렌더 가능(타임라인 SVG는 정적).</p>
+</main>
+</body>
+</html>
