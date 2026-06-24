@@ -103,7 +103,10 @@ def test_analyzer_two_pass_happy_path() -> None:
     pass1 = SimpleNamespace(content=[_text_block("Bitcoin rally", [_cite(0, "tops $100K")])])
     pass2 = SimpleNamespace(
         content=[
-            _text_block('{"event_type": "price_move", "direction": "긍정", "confidence": "MED"}')
+            _text_block(
+                '{"event_type": "price_move", "direction": "긍정", '
+                '"confidence": "MED", "impact_score": 88}'
+            )
         ]
     )
     client, calls = _fake_client([pass1, pass2])
@@ -112,6 +115,7 @@ def test_analyzer_two_pass_happy_path() -> None:
     assert result.event_type == "price_move"
     assert result.direction == "긍정"
     assert result.confidence == "MED"
+    assert result.impact_score == 88
     assert [c.raw_document_id for c in result.citations] == [10]
     assert result.analysis_text == "Bitcoin rally"
     assert len(calls) == 2  # 패스1 + 패스2

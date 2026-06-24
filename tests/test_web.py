@@ -26,7 +26,7 @@ from app.models import (
     Source,
 )
 from app.web.chat import ChatAnswer, ChatCitation, _ChatSource, _parse_chat, anthropic_chat
-from app.web.queries import BriefView, CitationView, load_brief
+from app.web.queries import BriefView, CitationView, load_brief, rank_board
 
 client = TestClient(app)
 
@@ -71,6 +71,46 @@ def test_last_updated_falls_back_to_generated_when_no_citation_times() -> None:
         citations=[_citation_view(None)],
     )
     assert view.last_updated == _GEN
+
+
+def _scored_brief(id: int, score: int | None, cluster: int | None, status: str = "ok") -> BriefView:
+    return BriefView(
+        id=id,
+        event_type="e",
+        direction="긍정",
+        confidence="MED",
+        analysis_text="a",
+        status=status,
+        generated_at=_GEN,
+        tickers=[],
+        citations=[],
+        impact_score=score,
+        cluster_id=cluster,
+    )
+
+
+def test_rank_board_sorts_by_impact_desc_and_labels_groups() -> None:
+    briefs = [
+        _scored_brief(1, 40, cluster=7),
+        _scored_brief(2, 90, cluster=3),
+        _scored_brief(3, 70, cluster=3),  # 같은 클러스터 → 같은 그룹
+    ]
+    rows = rank_board(briefs)
+    assert [r.brief_id for r in rows] == [2, 3, 1]  # 임팩트 내림차순
+    assert [r.impact_score for r in rows] == [90, 70, 40]
+    assert rows[0].group_label == "G1" and rows[1].group_label == "G1"  # cluster 3 공유
+    assert rows[2].group_label == "G2"  # cluster 7
+    assert rows[0].group_shape == "●" and rows[2].group_shape == "▲"
+
+
+def test_rank_board_excludes_unscored_and_non_ok() -> None:
+    briefs = [
+        _scored_brief(1, None, cluster=1),  # 미분석(impact_score 없음)
+        _scored_brief(2, 50, cluster=1, status="degraded"),  # ok 아님
+        _scored_brief(3, 60, cluster=2, status="ok"),
+    ]
+    rows = rank_board(briefs)
+    assert [r.brief_id for r in rows] == [3]
 
 
 # --------------------------------------------------------------------------- 단위: 채팅 파싱

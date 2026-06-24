@@ -36,7 +36,7 @@
   --border-strong: #3a4252;
   --text-1: #e6edf3;
   --text-2: #aeb9c7;
-  --text-3: #6e7a8a;
+  --text-3: #8a96a6; /* WCAG AA(≈4.6:1): 메타·타임스탬프 대비 상향 (STAGE2 blocker 4) */
 
   --up: #3fb950;
   --up-bg: rgba(63, 185, 80, 0.12);
@@ -710,6 +710,159 @@ button:focus-visible {
   }
   .brief-item summary::before {
     transition: none;
+  }
+}
+
+/* ----------------------------------------------------------- 임팩트 랭킹 보드 (스캔 레이어) */
+.impact-board .board-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-left: var(--sp-2);
+}
+
+table.board {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+table.board th,
+table.board td {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+
+table.board th {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+table.board th.num,
+table.board td.impact {
+  text-align: right;
+}
+
+table.board tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.board-row {
+  cursor: pointer;
+}
+
+.board-row:hover,
+.board-row:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+
+.board-row:focus-visible {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 임팩트 정량 스코어 — Mono 대형, 방향색 (STAGE2 blocker 2) */
+td.impact {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-4);
+  font-weight: 600;
+}
+
+td.impact[data-dir="up"] {
+  color: var(--up);
+}
+
+td.impact[data-dir="down"] {
+  color: var(--down);
+}
+
+td.impact[data-dir="neutral"] {
+  color: var(--text-2);
+}
+
+/* 그룹 = 색 + 모양 + G문자 3중 인코딩 (색맹 구분 가능, STAGE2 blocker 1) */
+.grp {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  margin-right: var(--sp-2);
+  display: inline-block;
+  min-width: 2.6em;
+}
+
+.grp.g1 {
+  color: var(--accent);
+}
+.grp.g2 {
+  color: #58a6ff;
+}
+.grp.g3 {
+  color: #bc8cff;
+}
+.grp.g4 {
+  color: #ff9f40;
+}
+.grp.g5 {
+  color: #56d364;
+}
+
+.grp-cell .tk {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-2);
+}
+
+.grp-cell .tk-sep {
+  color: var(--text-3);
+  margin: 0 var(--sp-1);
+}
+
+.tk-none {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+}
+
+.board-legend {
+  color: var(--text-3);
+  font-size: var(--fs-1);
+  line-height: 1.7;
+  margin: var(--sp-3) 0 0;
+}
+
+.board-legend b {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+/* 보드 행 선택 시 대상 브리프 잠깐 강조 */
+@keyframes brief-flash {
+  from {
+    background: var(--accent-bg);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.brief-flash {
+  animation: brief-flash 1.2s ease;
+  border-left-color: var(--accent) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brief-flash {
+    animation: none;
+    background: var(--accent-bg);
   }
 }
 

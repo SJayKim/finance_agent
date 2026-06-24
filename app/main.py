@@ -16,7 +16,7 @@ from app.pipeline.digest import anthropic_digester
 from app.pipeline.pipeline import PipelineAlreadyRunning, run_pipeline
 from app.runner import DailyRunAlreadyRunning, run_daily
 from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
-from app.web.queries import load_brief, load_digest, load_source_health
+from app.web.queries import load_brief, load_digest, load_source_health, rank_board
 
 BASE_DIR = Path(__file__).resolve().parent
 _KST = timezone(timedelta(hours=9))  # 07:00 KST 크론과 같은 기준일(§3) — KST는 DST 없음
@@ -123,11 +123,13 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
         digest = load_digest(session, brief_date)
         health = load_source_health(session, brief_date)
     last_updated = max((b.last_updated for b in briefs), default=None)
+    board = rank_board(briefs)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "briefs": briefs,
+            "board": board,
             "digest": digest,
             "health": health,
             "brief_date": brief_date,

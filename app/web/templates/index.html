@@ -41,6 +41,8 @@
 
     {% include "_digest.html" %}
 
+    {% include "_impact_board.html" %}
+
     <section class="briefs">
       <h2 class="section-title">증거 브리프</h2>
       {% if briefs %}
@@ -70,6 +72,26 @@
     </section>
   </main>
 
+  <script>
+    // 임팩트 보드 행 선택 → 해당 근거 브리프 펼치고 이동·하이라이트 (좌→우 동기화의 경량 버전).
+    (function () {
+      function openBrief(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (el.tagName === "DETAILS") el.open = true;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("brief-flash");
+        setTimeout(function () { el.classList.remove("brief-flash"); }, 1200);
+      }
+      document.querySelectorAll(".board-row").forEach(function (row) {
+        var id = row.getAttribute("data-brief");
+        row.addEventListener("click", function () { openBrief(id); });
+        row.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openBrief(id); }
+        });
+      });
+    })();
+  </script>
   <script>
     (function () {
       var btn = document.getElementById("theme-toggle");

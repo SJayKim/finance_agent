@@ -100,6 +100,9 @@ class BriefItem(Base):
     )  # STAGE0-BLOCKED: 자유 문자열
     direction: Mapped[str | None] = mapped_column(String, nullable=True)  # 긍정/부정/중립
     confidence: Mapped[str | None] = mapped_column(String, nullable=True)  # HIGH/MED/LOW
+    # 임팩트 정량 크기 0~100(부호는 direction에서 파생). 분석 산출물 — 근거(citations)로
+    # 뒷받침되며 status=ok일 때만 채워진다. 랭킹 보드 정렬 키(임팩트 내림차순).
+    impact_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     analysis_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String)  # ok | degraded | empty
     generated_at: Mapped[datetime] = mapped_column(
