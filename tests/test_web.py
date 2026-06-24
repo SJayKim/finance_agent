@@ -103,6 +103,20 @@ def test_rank_board_sorts_by_impact_desc_and_labels_groups() -> None:
     assert rows[0].group_shape == "●" and rows[2].group_shape == "▲"
 
 
+def test_rank_board_group_index_wraps_to_palette() -> None:
+    # Regression: 임팩트 보드 그룹 색 인코딩이 6번째 그룹부터 사라지는 버그
+    # Found by /qa on 2026-06-25
+    # group_index가 g6.. CSS 클래스를 내보내면 색 정의(g1~g5)가 없어 칩이 저대비로 떨어짐.
+    # 색 클래스는 모양(% 5)과 같은 주기로 순환해야 한다 — group_index는 1..5를 벗어나면 안 됨.
+    briefs = [_scored_brief(i, 100 - i, cluster=i) for i in range(1, 8)]  # 클러스터 7개(>5)
+    rows = rank_board(briefs)
+    assert [r.group_label for r in rows] == [f"G{i}" for i in range(1, 8)]  # 라벨은 고유
+    assert [r.group_index for r in rows] == [1, 2, 3, 4, 5, 1, 2]  # 색 클래스는 순환
+    # 6번째 그룹은 색·모양 모두 1번째와 동일(라벨만 다름)
+    assert rows[5].group_index == rows[0].group_index
+    assert rows[5].group_shape == rows[0].group_shape
+
+
 def test_rank_board_excludes_unscored_and_non_ok() -> None:
     briefs = [
         _scored_brief(1, None, cluster=1),  # 미분석(impact_score 없음)
