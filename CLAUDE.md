@@ -79,6 +79,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - SQLAlchemy `INSERT ... ON CONFLICT DO NOTHING`의 `result.rowcount`는 dialect가 multi-rowcount를 지원해도 **-1(신뢰 불가)**을 반환한다(실측: 3971건 적재에도 -1). 신규 적재 수가 필요하면 `.returning(<PK 컬럼>)` 붙이고 `len(session.execute(stmt).fetchall())`로 셀 것. (2026-06-22, app/pipeline/opendart.py sync)
 - API 키를 쿼리스트링으로 받는 외부 API(OpenDART `crtfc_key` 등)는 httpx INFO 로깅이 URL을 통째로 찍어 키를 노출한다. 러너에서 `logging.getLogger("httpx").setLevel(logging.WARNING)`로 억제할 것. (2026-06-22, app/pipeline/opendart.py main)
 - Windows CLI 진입점에서 비-ASCII(한글·em dash 등)를 `print`하면 cp949 stdout이 `UnicodeEncodeError`로 죽는다(실측: 소스 에러 메시지의 `—` → run_daily 데이터는 다 커밋됐는데 CLI가 exit 1). `main()` 진입부에서 `sys.stdout.reconfigure(encoding="utf-8")` 호출할 것. (2026-06-23, app/runner.py main)
+- sentence-transformers(`SentenceTransformer(...)`, app/embed/__init__.py)는 모델이 로컬 캐시에 있어도 로드 시 HF 허브로 메타데이터 HEAD 요청을 보낸다. 서버 프로세스에 truststore가 주입돼 있지 않으면 사내 TLS 가로채기로 `CERTIFICATE_VERIFY_FAILED` → cumulative `/chat` 첫 요청이 500. 서버는 네트워크가 불필요(캐시만 쓰면 됨)하므로 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`로 띄울 것. 모델 최초 다운로드(임베딩 백필)만 `truststore.inject_into_ssl()` 필요. (2026-06-23, app/embed/__init__.py / app/main.py)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
