@@ -45,6 +45,16 @@ class TickerView:
     is_candidate: bool
 
 
+def _asset_classes(tickers: list[TickerView]) -> list[str]:
+    """티커들의 market을 자산 분류로 매핑한 정렬된 distinct 리스트.
+
+    CRYPTO→"crypto", 그 외(KR·US)→"stock". 티커 없으면 [](전체 탭에서만 노출).
+    한 brief에 자산이 섞이면 둘 다 반환 → 양쪽 탭 모두 노출.
+    """
+    classes = {"crypto" if t.market == "CRYPTO" else "stock" for t in tickers}
+    return sorted(classes)
+
+
 @dataclass(frozen=True)
 class BriefView:
     """brief_item 1건의 추적성 뷰: 항목 메타 + 종목 + 인용 근거."""
@@ -67,6 +77,11 @@ class BriefView:
         times = [self.generated_at]
         times += [c.source_published_at for c in self.citations if c.source_published_at]
         return max(times)
+
+    @property
+    def asset_classes(self) -> list[str]:
+        """자산 탭 필터용 분류(crypto/stock). 티커 없으면 [](전체 탭에서만 노출)."""
+        return _asset_classes(self.tickers)
 
 
 def load_brief(session: Session, brief_date: date) -> list[BriefView]:
@@ -144,8 +159,18 @@ class BoardRow:
     event_type: str | None
     tickers: list[TickerView]
 
+    @property
+    def asset_classes(self) -> list[str]:
+        """자산 탭 필터용 분류(crypto/stock). 티커 없으면 [](전체 탭에서만 노출)."""
+        return _asset_classes(self.tickers)
+
 
 _GROUP_SHAPES = ["●", "▲", "■", "◆", "★"]
+
+
+def dates_with_briefs(session: Session) -> set[date]:
+    """brief_item이 하나라도 있는 brief_date의 set (날짜 칩 has_data 판정용, 순수 SELECT)."""
+    return set(session.execute(select(BriefItem.brief_date).distinct()).scalars())
 
 
 def rank_board(briefs: Sequence[BriefView]) -> list[BoardRow]:

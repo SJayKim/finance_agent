@@ -16,7 +16,13 @@ from app.pipeline.digest import anthropic_digester
 from app.pipeline.pipeline import PipelineAlreadyRunning, run_pipeline
 from app.runner import DailyRunAlreadyRunning, run_daily
 from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
-from app.web.queries import load_brief, load_digest, load_source_health, rank_board
+from app.web.queries import (
+    dates_with_briefs,
+    load_brief,
+    load_digest,
+    load_source_health,
+    rank_board,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 _KST = timezone(timedelta(hours=9))  # 07:00 KST 크론과 같은 기준일(§3) — KST는 DST 없음
@@ -122,8 +128,19 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
         briefs = load_brief(session, brief_date)
         digest = load_digest(session, brief_date)
         health = load_source_health(session, brief_date)
+        has_data = dates_with_briefs(session)
     last_updated = max((b.last_updated for b in briefs), default=None)
     board = rank_board(briefs)
+    today = datetime.now(_KST).date()
+    date_chips = [
+        {
+            "iso": d.isoformat(),
+            "label": d.strftime("%m-%d"),
+            "has_data": d in has_data,
+            "is_current": d == brief_date,
+        }
+        for d in (today - timedelta(days=n) for n in range(13, -1, -1))
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -133,6 +150,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
             "digest": digest,
             "health": health,
             "brief_date": brief_date,
+            "date_chips": date_chips,
             "prev_date": (brief_date - timedelta(days=1)).isoformat(),
             "next_date": (brief_date + timedelta(days=1)).isoformat(),
             "last_updated": last_updated,

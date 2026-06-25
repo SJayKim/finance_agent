@@ -26,7 +26,14 @@ from app.models import (
     Source,
 )
 from app.web.chat import ChatAnswer, ChatCitation, _ChatSource, _parse_chat, anthropic_chat
-from app.web.queries import BriefView, CitationView, load_brief, rank_board
+from app.web.queries import (
+    BriefView,
+    CitationView,
+    TickerView,
+    dates_with_briefs,
+    load_brief,
+    rank_board,
+)
 
 client = TestClient(app)
 
@@ -125,6 +132,36 @@ def test_rank_board_excludes_unscored_and_non_ok() -> None:
     ]
     rows = rank_board(briefs)
     assert [r.brief_id for r in rows] == [3]
+
+
+# --------------------------------------------------------------------------- 단위: 자산 분류
+
+
+def _ticker(market: str) -> TickerView:
+    return TickerView(ticker="X", market=market, is_candidate=False)
+
+
+def test_asset_classes_maps_market_to_class() -> None:
+    crypto = BriefView(
+        id=1, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("CRYPTO")], citations=[],
+    )
+    stock = BriefView(
+        id=2, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("KR"), _ticker("US")], citations=[],
+    )
+    mixed = BriefView(
+        id=3, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("CRYPTO"), _ticker("KR")], citations=[],
+    )
+    none = BriefView(
+        id=4, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[], citations=[],
+    )
+    assert crypto.asset_classes == ["crypto"]
+    assert stock.asset_classes == ["stock"]
+    assert mixed.asset_classes == ["crypto", "stock"]
+    assert none.asset_classes == []
 
 
 # --------------------------------------------------------------------------- 단위: 채팅 파싱
@@ -300,6 +337,21 @@ def test_dashboard_renders_briefs_and_citation_links(db: sessionmaker) -> None:
     assert 'href="http://news/btc"' in body
     assert "후보" in body  # MSTR is_candidate
     assert "근거 없음" in body  # status=empty 항목
+
+
+def test_dates_with_briefs_includes_seeded_dates(db: sessionmaker) -> None:
+    _seed_brief(db)
+    with db() as s:
+        assert _BRIEF_DATE in dates_with_briefs(s)
+
+
+def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
+    _seed_brief(db)
+    body = client.get(f"/?date={_BRIEF_DATE.isoformat()}").text
+    assert "asset-tabs" in body
+    assert "board-card" in body
+    assert "date-chip" in body
+    assert 'data-asset="crypto stock"' in body  # ok 브리프: BTC(crypto)+MSTR(us=stock)
 
 
 def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:
