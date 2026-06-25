@@ -155,6 +155,40 @@ def test_run_daily_concurrency_guard(db: sessionmaker) -> None:
         holder.close()
 
 
+def test_run_daily_runs_seeder_and_logs(db: sessionmaker) -> None:
+    """seeder 주입 시 _collect 이전에 한 번 호출되고 audit_log에 seed 1행이 남는다."""
+    calls: list[bool] = []
+
+    def fake_seeder(session: object) -> dict[str, int]:
+        calls.append(True)
+        return {"sec": 0, "opendart": 0, "coingecko": 2, "coverage": 4}
+
+    run_daily(
+        _BRIEF_DATE,
+        connectors=[("good", _GoodConnector())],
+        embedder=None,
+        digester=None,
+        analyzer=None,
+        seeder=fake_seeder,
+    )
+    assert calls == [True]  # 정확히 한 번
+    actions = _audit_actions(db)
+    assert actions.count("seed") == 1
+
+
+def test_run_daily_no_seeder_by_default(db: sessionmaker) -> None:
+    """seeder 미주입(기본 None)이면 시딩 단계가 없고 seed audit 행도 없다(빠른 경로 불변)."""
+    run_daily(
+        _BRIEF_DATE,
+        connectors=[("good", _GoodConnector())],
+        embedder=None,
+        digester=None,
+        analyzer=None,
+    )
+    actions = _audit_actions(db)
+    assert actions.count("seed") == 0
+
+
 def test_run_daily_runs_pipeline_and_digest(db: sessionmaker) -> None:
     """good 커넥터가 적재 → run_daily 후 그날 brief_items + DailyDigest 행이 존재한다."""
     report = run_daily(

@@ -14,6 +14,7 @@ from app.embed import get_embedder
 from app.pipeline.citations import build_client
 from app.pipeline.digest import anthropic_digester
 from app.pipeline.pipeline import PipelineAlreadyRunning, run_pipeline
+from app.pipeline.seed import seed_universe
 from app.runner import DailyRunAlreadyRunning, run_daily
 from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
 from app.web.queries import (
@@ -101,7 +102,9 @@ def run_daily_endpoint() -> dict[str, object]:
         else None
     )
     try:
-        report = run_daily(brief_date, embedder=embedder, digester=digester)
+        report = run_daily(
+            brief_date, embedder=embedder, digester=digester, seeder=seed_universe
+        )
     except DailyRunAlreadyRunning as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {

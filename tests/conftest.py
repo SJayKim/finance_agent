@@ -43,6 +43,7 @@ _TABLES = (
     "raw_documents",
     "sources",
     "coverage",
+    "security_aliases",
     "audit_log",
 )
 
