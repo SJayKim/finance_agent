@@ -26,7 +26,14 @@ from app.models import (
     Source,
 )
 from app.web.chat import ChatAnswer, ChatCitation, _ChatSource, _parse_chat, anthropic_chat
-from app.web.queries import BriefView, CitationView, load_brief
+from app.web.queries import (
+    BriefView,
+    CitationView,
+    TickerView,
+    dates_with_briefs,
+    load_brief,
+    rank_board,
+)
 
 client = TestClient(app)
 
@@ -71,6 +78,90 @@ def test_last_updated_falls_back_to_generated_when_no_citation_times() -> None:
         citations=[_citation_view(None)],
     )
     assert view.last_updated == _GEN
+
+
+def _scored_brief(id: int, score: int | None, cluster: int | None, status: str = "ok") -> BriefView:
+    return BriefView(
+        id=id,
+        event_type="e",
+        direction="긍정",
+        confidence="MED",
+        analysis_text="a",
+        status=status,
+        generated_at=_GEN,
+        tickers=[],
+        citations=[],
+        impact_score=score,
+        cluster_id=cluster,
+    )
+
+
+def test_rank_board_sorts_by_impact_desc_and_labels_groups() -> None:
+    briefs = [
+        _scored_brief(1, 40, cluster=7),
+        _scored_brief(2, 90, cluster=3),
+        _scored_brief(3, 70, cluster=3),  # 같은 클러스터 → 같은 그룹
+    ]
+    rows = rank_board(briefs)
+    assert [r.brief_id for r in rows] == [2, 3, 1]  # 임팩트 내림차순
+    assert [r.impact_score for r in rows] == [90, 70, 40]
+    assert rows[0].group_label == "G1" and rows[1].group_label == "G1"  # cluster 3 공유
+    assert rows[2].group_label == "G2"  # cluster 7
+    assert rows[0].group_shape == "●" and rows[2].group_shape == "▲"
+
+
+def test_rank_board_group_index_wraps_to_palette() -> None:
+    # Regression: 임팩트 보드 그룹 색 인코딩이 6번째 그룹부터 사라지는 버그
+    # Found by /qa on 2026-06-25
+    # group_index가 g6.. CSS 클래스를 내보내면 색 정의(g1~g5)가 없어 칩이 저대비로 떨어짐.
+    # 색 클래스는 모양(% 5)과 같은 주기로 순환해야 한다 — group_index는 1..5를 벗어나면 안 됨.
+    briefs = [_scored_brief(i, 100 - i, cluster=i) for i in range(1, 8)]  # 클러스터 7개(>5)
+    rows = rank_board(briefs)
+    assert [r.group_label for r in rows] == [f"G{i}" for i in range(1, 8)]  # 라벨은 고유
+    assert [r.group_index for r in rows] == [1, 2, 3, 4, 5, 1, 2]  # 색 클래스는 순환
+    # 6번째 그룹은 색·모양 모두 1번째와 동일(라벨만 다름)
+    assert rows[5].group_index == rows[0].group_index
+    assert rows[5].group_shape == rows[0].group_shape
+
+
+def test_rank_board_excludes_unscored_and_non_ok() -> None:
+    briefs = [
+        _scored_brief(1, None, cluster=1),  # 미분석(impact_score 없음)
+        _scored_brief(2, 50, cluster=1, status="degraded"),  # ok 아님
+        _scored_brief(3, 60, cluster=2, status="ok"),
+    ]
+    rows = rank_board(briefs)
+    assert [r.brief_id for r in rows] == [3]
+
+
+# --------------------------------------------------------------------------- 단위: 자산 분류
+
+
+def _ticker(market: str) -> TickerView:
+    return TickerView(ticker="X", market=market, is_candidate=False)
+
+
+def test_asset_classes_maps_market_to_class() -> None:
+    crypto = BriefView(
+        id=1, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("CRYPTO")], citations=[],
+    )
+    stock = BriefView(
+        id=2, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("KR"), _ticker("US")], citations=[],
+    )
+    mixed = BriefView(
+        id=3, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[_ticker("CRYPTO"), _ticker("KR")], citations=[],
+    )
+    none = BriefView(
+        id=4, event_type=None, direction=None, confidence=None, analysis_text=None,
+        status="ok", generated_at=_GEN, tickers=[], citations=[],
+    )
+    assert crypto.asset_classes == ["crypto"]
+    assert stock.asset_classes == ["stock"]
+    assert mixed.asset_classes == ["crypto", "stock"]
+    assert none.asset_classes == []
 
 
 # --------------------------------------------------------------------------- 단위: 채팅 파싱
@@ -246,6 +337,21 @@ def test_dashboard_renders_briefs_and_citation_links(db: sessionmaker) -> None:
     assert 'href="http://news/btc"' in body
     assert "후보" in body  # MSTR is_candidate
     assert "근거 없음" in body  # status=empty 항목
+
+
+def test_dates_with_briefs_includes_seeded_dates(db: sessionmaker) -> None:
+    _seed_brief(db)
+    with db() as s:
+        assert _BRIEF_DATE in dates_with_briefs(s)
+
+
+def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
+    _seed_brief(db)
+    body = client.get(f"/?date={_BRIEF_DATE.isoformat()}").text
+    assert "asset-tabs" in body
+    assert "board-card" in body
+    assert "date-chip" in body
+    assert 'data-asset="crypto stock"' in body  # ok 브리프: BTC(crypto)+MSTR(us=stock)
 
 
 def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:

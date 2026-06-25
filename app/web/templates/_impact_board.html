@@ -1,0 +1,35 @@
+{% if board %}
+<section class="impact-board">
+  <h2 class="section-title">임팩트 랭킹 <span class="board-sub">임팩트 내림차순</span></h2>
+  <div class="board-cards">
+    {% for r in board %}
+      {% set dk = {'긍정':'up','부정':'down','중립':'neutral'}.get(r.direction, 'neutral') %}
+      <div class="board-card g{{ r.group_index }}" data-brief="brief-{{ r.brief_id }}"
+           data-asset="{{ ' '.join(r.asset_classes) }}" data-dir="{{ dk }}"
+           tabindex="0" role="button"
+           aria-label="{{ r.event_type or '이벤트' }} · 임팩트 {{ r.impact_score }} · 근거 보기">
+        <div class="bc-top">
+          <span class="bc-tickers">
+            {% if r.tickers %}
+              {% for t in r.tickers %}{{ t.ticker }}{% if not loop.last %} · {% endif %}{% endfor %}
+            {% else %}
+              <span class="tk-none">종목 미링크</span>
+            {% endif %}
+          </span>
+          <span class="bc-impact" data-dir="{{ dk }}">{% if dk == 'up' %}+{% elif dk == 'down' %}-{% endif %}{{ r.impact_score }}</span>
+        </div>
+        <div class="bc-dir" data-dir="{{ dk }}">{{ {'up':'▲','down':'▼','neutral':'■'}[dk] }} {{ r.direction or '중립' }}</div>
+        <div class="bc-meta">
+          <span class="grp g{{ r.group_index }}">{{ r.group_shape }} {{ r.group_label }}</span>
+          <span class="bc-event">{{ r.event_type or '이벤트' }}</span>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <p class="board-legend">
+    좌측 색 보더 + <b>G문자</b> = 같은 뉴스 클러스터(색 + 모양 + 문자, 색맹 구분 가능). 카드
+    선택 → 아래 근거 브리프로 이동. 임팩트는 <b>이벤트 단위</b> 영향도 크기(0~100)이며 부호는
+    방향에서 파생 — 투자 권유가 아니라 뉴스 기준 영향도 분석입니다.
+  </p>
+</section>
+{% endif %}

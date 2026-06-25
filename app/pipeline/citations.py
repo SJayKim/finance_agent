@@ -60,6 +60,8 @@ class ImpactResult:
     event_type: str | None
     direction: str | None
     confidence: str | None
+    # 임팩트 크기 0~100(부호 없음 — 방향은 direction). 근거 기반 분석 산출물. 근거 없으면 None.
+    impact_score: int | None = None
 
 
 # analyze_impact(파이프라인)가 주입받는 I/O 경계. 키 없으면 None(=비활성) 주입 가능.
@@ -76,7 +78,10 @@ _PASS1_TASK = "이 뉴스 클러스터의 영향도를 분석하라."
 
 _PASS2_SYSTEM = (
     "너는 1차 영향도 분석을 구조화한다. 아래 분석 텍스트와 인용된 근거만 사용하고, 새 사실·"
-    "수치·종목을 도입하지 마라. 재구조화만 한다."
+    "수치·종목을 도입하지 마라. 재구조화만 한다. impact_score는 이 이벤트가 영향 종목에 주는 "
+    "임팩트의 크기(부호 없음)를 0~100으로 매긴다 — 인용된 근거가 시사하는 강도만 반영하고, "
+    "방향(상승/하락)은 direction이 따로 표현하므로 점수에 부호를 넣지 마라. 근거가 약하거나 "
+    "중립이면 낮게, 다수 강한 근거가 한 방향을 가리키면 높게. 근거로 뒷받침 안 되는 값은 쓰지 마라."
 )
 
 _PASS2_SCHEMA: dict[str, Any] = {
@@ -85,8 +90,10 @@ _PASS2_SCHEMA: dict[str, Any] = {
         "event_type": {"type": "string"},  # taxonomy STAGE0-BLOCKED → 자유 문자열
         "direction": {"type": "string", "enum": ["긍정", "부정", "중립"]},
         "confidence": {"type": "string", "enum": ["HIGH", "MED", "LOW"]},
+        # min/max는 Anthropic structured-output이 integer에 미지원(400). 범위는 _PASS2_SYSTEM이 지시.
+        "impact_score": {"type": "integer"},
     },
-    "required": ["event_type", "direction", "confidence"],
+    "required": ["event_type", "direction", "confidence", "impact_score"],
     "additionalProperties": False,
 }
 
@@ -205,6 +212,7 @@ def anthropic_analyzer(client: anthropic.Anthropic, model: str) -> ImpactAnalyze
                 event_type=data.get("event_type"),
                 direction=data.get("direction"),
                 confidence=data.get("confidence"),
+                impact_score=data.get("impact_score"),
             )
         except anthropic.APIError:
             return None  # 쿼터 소진·소스 다운·장애 → degraded

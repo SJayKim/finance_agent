@@ -29,9 +29,13 @@
         <p class="meta">
           {{ brief_date.isoformat() }} (KST){% if last_updated %} · 마지막 업데이트 {{ last_updated.strftime("%Y-%m-%d %H:%M") }}{% endif %}
         </p>
-        <nav class="date-nav">
-          <a href="/?date={{ prev_date }}">← {{ prev_date }}</a>
-          <a href="/?date={{ next_date }}">{{ next_date }} →</a>
+        <nav class="date-chips">
+          <a class="date-arrow" href="/?date={{ prev_date }}" aria-label="이전 날짜">←</a>
+          {% for c in date_chips %}
+          <a class="date-chip{% if c.is_current %} current{% endif %}{% if not c.has_data %} no-data{% endif %}"
+             href="/?date={{ c.iso }}">{{ c.label }}</a>
+          {% endfor %}
+          <a class="date-arrow" href="/?date={{ next_date }}" aria-label="다음 날짜">→</a>
         </nav>
       </div>
       <button id="theme-toggle" type="button" aria-label="테마 전환">◐</button>
@@ -40,6 +44,14 @@
     {% include "_source_health.html" %}
 
     {% include "_digest.html" %}
+
+    <div class="asset-tabs">
+      <button type="button" data-asset="all" class="active">전체</button>
+      <button type="button" data-asset="stock">주식</button>
+      <button type="button" data-asset="crypto">암호화폐</button>
+    </div>
+
+    {% include "_impact_board.html" %}
 
     <section class="briefs">
       <h2 class="section-title">증거 브리프</h2>
@@ -70,6 +82,48 @@
     </section>
   </main>
 
+  <script>
+    // 임팩트 보드 행 선택 → 해당 근거 브리프 펼치고 이동·하이라이트 (좌→우 동기화의 경량 버전).
+    (function () {
+      function openBrief(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (el.tagName === "DETAILS") el.open = true;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("brief-flash");
+        setTimeout(function () { el.classList.remove("brief-flash"); }, 1200);
+      }
+      document.querySelectorAll(".board-card").forEach(function (row) {
+        var id = row.getAttribute("data-brief");
+        row.addEventListener("click", function () { openBrief(id); });
+        row.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openBrief(id); }
+        });
+      });
+    })();
+  </script>
+  <script>
+    // 자산 탭 필터: 선택 자산이 요소의 data-asset(공백분리)에 포함되면 표시, 아니면 숨김.
+    // all이면 전부 표시. 특정 자산 선택 시 data-asset 빈 요소(티커 없음)는 숨김.
+    (function () {
+      var tabs = document.querySelectorAll(".asset-tabs button");
+      var targets = document.querySelectorAll(".board-card, .brief-item");
+      function apply(asset) {
+        targets.forEach(function (el) {
+          var classes = (el.getAttribute("data-asset") || "").split(" ").filter(Boolean);
+          var show = asset === "all" || classes.indexOf(asset) !== -1;
+          el.style.display = show ? "" : "none";
+        });
+      }
+      tabs.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          tabs.forEach(function (b) { b.classList.remove("active"); });
+          btn.classList.add("active");
+          apply(btn.getAttribute("data-asset"));
+        });
+      });
+    })();
+  </script>
   <script>
     (function () {
       var btn = document.getElementById("theme-toggle");

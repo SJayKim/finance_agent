@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>시안 2 — 터미널 밀집형</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@700&display=swap" />
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  .shell { padding: var(--sp-3) var(--sp-4); }
+  .topbar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: var(--sp-3); margin-bottom: var(--sp-3); }
+  .topbar h1 { font-family: var(--font-display); font-size: var(--fs-5); margin: 0; }
+  /* 마켓 스트립 (A2 Perplexity) */
+  .strip { display: flex; gap: var(--sp-4); margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-2); }
+  .strip span b { color: var(--text-3); font-weight: 400; margin-right: var(--sp-1); }
+  /* 필터 바 (P8) */
+  .filters { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+  .filters button, .filters input { font-family: var(--font-mono); font-size: var(--fs-1);
+    background: var(--surface); color: var(--text-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--sp-1) var(--sp-3); cursor: pointer; }
+  .filters button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+  .filters .saved { margin-left: auto; }
+  /* 3패널 그리드 (P10) */
+  .grid { display: grid; grid-template-columns: 1.1fr 1.4fr 1fr; gap: var(--sp-3); }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    display: flex; flex-direction: column; min-height: 70vh; }
+  .panel h2 { font-family: var(--font-mono); font-size: var(--fs-1); text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-3); margin: 0; padding: var(--sp-3) var(--sp-3) var(--sp-2);
+    border-bottom: 1px solid var(--border); }
+  /* P6 — 임팩트 랭킹 테이블 */
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
+  th, td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+  th { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); font-weight: 400; }
+  td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+  tr.sel { background: var(--surface-2); }
+  tr[data-grp]:hover { background: var(--surface-2); cursor: pointer; }
+  .tk { font-family: var(--font-mono); font-weight: 600; }
+  /* 컬러 그룹 링크 도트 (P7 Koyfin) */
+  .grp { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--sp-2); vertical-align: middle; }
+  .g1 { background: var(--accent); } .g2 { background: #58a6ff; } .g3 { background: #bc8cff; }
+  /* 스파크라인 (P6 트렌드3) */
+  .spark { display: inline-block; vertical-align: middle; }
+  /* 뉴스 리스트 (가운데) */
+  .news { overflow: auto; padding: var(--sp-2); }
+  .news-item { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+  .news-item .ev { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); }
+  .news-item p { margin: var(--sp-1) 0 0; font-size: var(--fs-2); }
+  .news-item.flash { animation: flash 1.2s ease; } /* 트렌드7 행 플래시 */
+  @keyframes flash { 0%,100% { background: transparent; } 30% { background: var(--accent-bg); } }
+  /* 우측 근거 패널 (그룹 동기화) */
+  .detail { padding: var(--sp-3); overflow: auto; }
+  .detail .wiim { font-size: var(--fs-3); margin: 0 0 var(--sp-3); }
+  .detail .wiim::before { content: "왜? "; color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-1); }
+  .citations { list-style: none; padding-left: var(--sp-2); margin: var(--sp-2) 0 0; }
+  .citations li { position: relative; padding-left: var(--sp-4); padding-bottom: var(--sp-3); font-size: var(--fs-2); }
+  .citations li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .citations li::after { content: ""; position: absolute; left: 0; top: 0.7em; width: var(--sp-3); height: 2px; background: var(--border); }
+  blockquote { margin: 0; font-style: italic; border-left: 2px solid var(--accent); padding-left: var(--sp-2); }
+  .kbd { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); margin-top: var(--sp-3); }
+  .kbd kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .panel { min-height: auto; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <p class="caption">시안 2 · <b>터미널 밀집형</b> (A+ 스택: HTMX + 고밀도만 JS island) —
+    반영 개선안: <b>P6</b> 임팩트 랭킹 보드(델타+스파크라인) · <b>P7</b> 종목 중심 컬러 그룹 링크 ·
+    <b>P8</b> 필터+저장된 뷰 · <b>P10</b> 멀티패널. 좌(랭킹)→가운데(뉴스)→우(근거) 동기화.</p>
+
+  <div class="topbar">
+    <h1>증거 터미널</h1>
+    <div class="strip">
+      <span><b>KOSPI</b> 2,748 <span class="dir up">▲0.9%</span></span>
+      <span><b>S&P</b> 5,610 <span class="dir up">▲0.4%</span></span>
+      <span><b>BTC</b> 71,2k <span class="dir down">▼1.2%</span></span>
+      <span><b>VIX</b> 13.8 <span class="dir down">▼3.1%</span></span>
+    </div>
+  </div>
+
+  <div class="filters">
+    <button class="on">전체</button>
+    <button>실적</button>
+    <button>규제</button>
+    <button>M&amp;A</button>
+    <button>크립토</button>
+    <input type="text" placeholder="종목/티커 필터…" style="min-width:11rem" />
+    <button class="saved">★ 저장된 뷰: 반도체</button>
+  </div>
+
+  <div class="grid">
+    <!-- 좌: 임팩트 랭킹 (P6) -->
+    <section class="panel">
+      <h2>임팩트 랭킹 · 종목</h2>
+      <table>
+        <thead><tr><th>종목</th><th>방향</th><th>임팩트</th><th>추세</th></tr></thead>
+        <tbody>
+          <tr class="sel" data-grp="1"><td><span class="grp g1"></span><span class="tk">NVDA</span></td><td><span class="dir up">▲</span></td><td class="num">+92</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,14 8,12 16,13 24,8 32,6 40,3 48,1" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="1"><td><span class="grp g1"></span><span class="tk">005930</span></td><td><span class="dir up">▲</span></td><td class="num">+78</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,12 8,13 16,10 24,9 32,7 40,5 48,4" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="1"><td><span class="grp g1"></span><span class="tk">000660</span></td><td><span class="dir up">▲</span></td><td class="num">+71</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,11 8,10 16,11 24,8 32,7 40,6 48,3" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="2"><td><span class="grp g2"></span><span class="tk">GOOGL</span></td><td><span class="dir down">▼</span></td><td class="num">-64</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,3 8,5 16,4 24,8 32,9 40,12 48,14" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="2"><td><span class="grp g2"></span><span class="tk">META</span></td><td><span class="dir down">▼</span></td><td class="num">-58</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,4 8,4 16,6 24,7 32,10 40,11 48,13" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="3"><td><span class="grp g3"></span><span class="tk">BTC</span></td><td><span class="dir down">▼</span></td><td class="num">-41</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,6 8,5 16,8 24,7 32,9 40,8 48,11" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+        </tbody>
+      </table>
+      <p class="kbd" style="padding:var(--sp-3)">탭/저장된 뷰로 종목군 전환 · 행 선택 시 우측 근거 동기화</p>
+    </section>
+
+    <!-- 가운데: 뉴스 피드 -->
+    <section class="panel">
+      <h2>뉴스 피드 · <span class="grp g1"></span>그룹 1 (반도체)</h2>
+      <div class="news">
+        <div class="news-item flash"><span class="ev">실적 · 14분 전 · <span class="fresh live">LIVE</span></span>
+          <p>엔비디아 데이터센터 매출 154%↑ 사상 최고 — 컨센서스 12% 상회</p></div>
+        <div class="news-item"><span class="ev">공급망 · 1시간 전</span>
+          <p>HBM 공급 부족 2026년까지 지속 전망, 메모리 3사 가격 협상력 강화</p></div>
+        <div class="news-item"><span class="ev">애널리스트 · 2시간 전</span>
+          <p>모건스탠리, 삼성전자·SK하이닉스 목표가 상향</p></div>
+        <div class="news-item"><span class="ev">산업 · 3시간 전</span>
+          <p>대만 TSMC 3나노 가동률 풀가동, 파운드리 수급 타이트</p></div>
+      </div>
+    </section>
+
+    <!-- 우: 근거 패널 (선택 종목 동기화) -->
+    <section class="panel">
+      <h2><span class="grp g1"></span>NVDA · 근거 트리</h2>
+      <div class="detail">
+        <div style="display:flex;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-2)">
+          <span class="dir up">▲ 긍정</span><span class="conf high">HIGH</span><span class="fresh recent">14분 전</span>
+        </div>
+        <p class="wiim">분기 매출 컨센서스 12% 상회 — AI 데이터센터 수요 가속이 반도체 밸류체인 상방 압력.</p>
+        <ul class="citations">
+          <li><blockquote>"데이터센터 부문 매출 전년比 154% 증가, 사상 최고."</blockquote>
+            <span class="fresh live">공식·IR</span> <span class="mono" style="color:var(--text-3)">06-24 06:40</span></li>
+          <li><blockquote>"HBM 공급 부족 2026년까지 — 메모리 3사 수혜."</blockquote>
+            <span class="fresh recent">언론</span> <span class="mono" style="color:var(--text-3)">06-24 07:55</span></li>
+        </ul>
+        <p class="kbd"><kbd>↑</kbd><kbd>↓</kbd> 종목 이동 · <kbd>Enter</kbd> 본문 · <kbd>Esc</kbd> 닫기</p>
+      </div>
+    </section>
+  </div>
+
+  <p class="caption" style="margin-top:var(--sp-3)"><b>설계 노트</b> — J1(30초 스캔)·J4(관심 종목만)·
+    J5(뉴스↔종목 인과)를 한 화면에. 좌측 임팩트 랭킹에서 종목 선택 → 같은 컬러 그룹의 뉴스·근거가
+    가운데/우측에 동시 점등(Koyfin 컬러 그룹). 숫자는 모노 tabular 컬럼 정렬(터미널 미학·트렌드4).
+    이 3패널 동기화·다중 필터만 경량 JS island, 나머지는 현 HTMX 조각 재사용.</p>
+</div>
+</body>
+</html>

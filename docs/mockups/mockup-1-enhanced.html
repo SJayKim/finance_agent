@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>시안 1 — 현 스택 강화형</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@700&display=swap" />
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  main { max-width: 56rem; margin: 0 auto; padding: var(--sp-6) var(--sp-4); }
+  .app-header { display: flex; align-items: flex-start; justify-content: space-between;
+    border-bottom: 1px solid var(--border); padding-bottom: var(--sp-4); margin-bottom: var(--sp-5); }
+  .app-header h1 { font-family: var(--font-display); font-size: var(--fs-6); margin: 0 0 var(--sp-1); }
+  .meta { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-2); margin: 0; }
+  .section-title { font-family: var(--font-display); font-size: var(--fs-5);
+    margin: var(--sp-6) 0 var(--sp-4); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--border); }
+  /* 브리프 카드 */
+  .brief { background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong); border-radius: var(--radius);
+    margin-bottom: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+  .brief.up { border-left-color: var(--up); }
+  .brief.down { border-left-color: var(--down); }
+  .brief-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+  .event-type { font-family: var(--font-mono); font-weight: 600; }
+  /* P1 — WIIM 한 줄 */
+  .wiim { margin: var(--sp-2) 0 0; color: var(--text-1); font-size: var(--fs-3); }
+  .wiim::before { content: "왜? "; color: var(--accent); font-family: var(--font-mono);
+    font-size: var(--fs-1); font-weight: 600; }
+  .tickers { list-style: none; padding: 0; margin: var(--sp-3) 0 0; display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+  .tickers li { display: inline-flex; align-items: baseline; gap: var(--sp-1);
+    border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius);
+    padding: var(--sp-1) var(--sp-3); }
+  .ticker { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-2); }
+  .market { color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-1); }
+  details > summary { cursor: pointer; color: var(--text-3); font-size: var(--fs-2);
+    font-family: var(--font-mono); margin-top: var(--sp-3); list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸ 근거 트리"; }
+  details[open] > summary::before { content: "▾ 근거 트리"; }
+  /* 인용 트리 (시그니처 유지) */
+  .citations { list-style: none; padding-left: var(--sp-2); margin: var(--sp-3) 0 0; }
+  .citations li { position: relative; padding-left: var(--sp-4); padding-bottom: var(--sp-3); }
+  .citations li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .citations li::after { content: ""; position: absolute; left: 0; top: 0.7em; width: var(--sp-3); height: 2px; background: var(--border); }
+  .citations li:last-child::before { bottom: auto; height: 0.7em; }
+  blockquote { margin: 0; font-style: italic; border-left: 2px solid var(--accent); padding-left: var(--sp-2); }
+  /* P4 — 소스 신뢰 칩 */
+  .src-chip { font-family: var(--font-mono); font-size: var(--fs-1); padding: 0 var(--sp-2);
+    border-radius: var(--radius-pill); margin-right: var(--sp-2); }
+  .src-chip.official { background: var(--up-bg); color: var(--up); }
+  .src-chip.press { background: var(--accent-bg); color: var(--accent); }
+  .src-chip.blog { background: var(--neutral-bg); color: var(--text-3); }
+  .stale-cite { opacity: 0.5; } /* P2 — decay */
+  /* P5 — 정형 질문 버튼 */
+  .ask { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
+  .ask button { font-family: var(--font-mono); font-size: var(--fs-1); cursor: pointer;
+    background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border);
+    border-radius: var(--radius-pill); padding: var(--sp-1) var(--sp-3); }
+  .ask button:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <p class="caption">시안 1 · <b>현 스택 강화형</b> (HTMX+Jinja2 그대로) — 반영 개선안:
+    <b>P1</b> WIIM 한 줄 · <b>P2</b> 상대 신선도+decay · <b>P3</b> 방향 이중 인코딩(색+부호) ·
+    <b>P4</b> 소스 신뢰 칩 · <b>P5</b> 정형 질문 버튼. 단일 컬럼·인용 트리 유지.</p>
+
+  <header class="app-header">
+    <div>
+      <h1>증거 브리프</h1>
+      <p class="meta">2026-06-24 (KST) · 마지막 업데이트 09:12 <span class="fresh live">LIVE · 3분 전</span></p>
+    </div>
+    <button style="background:var(--surface);border:1px solid var(--border);color:var(--text-2);border-radius:var(--radius);padding:var(--sp-2) var(--sp-3);cursor:pointer">◐</button>
+  </header>
+
+  <h2 class="section-title">증거 브리프 · 임팩트순</h2>
+
+  <article class="brief up">
+    <div class="brief-head">
+      <span class="event-type">실적 서프라이즈</span>
+      <span class="dir up">▲ 긍정</span>
+      <span class="conf high">신뢰 HIGH</span>
+      <span class="fresh recent">14분 전</span>
+    </div>
+    <p class="wiim">엔비디아 분기 매출이 컨센서스를 12% 상회, AI 데이터센터 수요 가속 신호로 반도체 밸류체인 전반에 상방 압력.</p>
+    <ul class="tickers">
+      <li><span class="ticker">NVDA</span><span class="market">NASDAQ</span></li>
+      <li><span class="ticker">005930</span><span class="market">KRX</span><span class="market" style="color:var(--accent)">후보</span></li>
+      <li><span class="ticker">000660</span><span class="market">KRX</span><span class="market" style="color:var(--accent)">후보</span></li>
+    </ul>
+    <details>
+      <summary></summary>
+      <ul class="citations">
+        <li>
+          <blockquote>"데이터센터 부문 매출이 전년 대비 154% 증가하며 사상 최고치를 기록했다."</blockquote>
+          <span class="src-chip official">공식·IR</span><span class="mono" style="color:var(--text-3)">06-24 06:40</span>
+          <a href="#">원문</a>
+        </li>
+        <li>
+          <blockquote>"HBM 공급 부족이 2026년까지 지속될 전망 — 메모리 3사 수혜."</blockquote>
+          <span class="src-chip press">언론</span><span class="mono" style="color:var(--text-3)">06-24 07:55</span>
+          <a href="#">원문</a>
+        </li>
+      </ul>
+      <div class="ask">
+        <button>어떤 뉴스에서 도출됐나?</button>
+        <button>반대 근거는?</button>
+        <button>관련 종목 더 보기</button>
+      </div>
+    </details>
+  </article>
+
+  <article class="brief down">
+    <div class="brief-head">
+      <span class="event-type">규제·정책</span>
+      <span class="dir down">▼ 부정</span>
+      <span class="conf med">신뢰 MED</span>
+      <span class="fresh stale">3시간 전</span>
+    </div>
+    <p class="wiim">EU가 빅테크 대상 신규 디지털세 초안을 공개, 플랫폼 광고 매출 마진 압박 우려.</p>
+    <ul class="tickers">
+      <li><span class="ticker">GOOGL</span><span class="market">NASDAQ</span></li>
+      <li><span class="ticker">META</span><span class="market">NASDAQ</span></li>
+    </ul>
+    <details>
+      <summary></summary>
+      <ul class="citations">
+        <li class="stale-cite">
+          <blockquote>"초안은 연 매출 7.5억 유로 이상 플랫폼에 3% 과세를 제안한다."</blockquote>
+          <span class="src-chip press">언론</span><span class="mono" style="color:var(--text-3)">06-24 06:10 · 오래됨</span>
+          <a href="#">원문</a>
+        </li>
+        <li class="stale-cite">
+          <blockquote>"업계는 이중과세 가능성을 들어 반발하고 있다."</blockquote>
+          <span class="src-chip blog">블로그</span><span class="mono" style="color:var(--text-3)">06-23 22:30 · 오래됨</span>
+          <a href="#">원문</a>
+        </li>
+      </ul>
+      <div class="ask">
+        <button>어떤 뉴스에서 도출됐나?</button>
+        <button>반대 근거는?</button>
+        <button>관련 종목 더 보기</button>
+      </div>
+    </details>
+  </article>
+
+  <p class="caption" style="margin-top:var(--sp-6)"><b>설계 노트</b> — 펼치기 전 "왜?" 한 줄(P1)로
+    스캔 비용을 줄이고, 신선도 배지·흐림(P2)으로 J2("근거가 신선한가") 마찰을 해소.
+    방향은 색이 빠져도 ▲/▼ 부호로 읽힘(P3, 접근성). 인용 트리 시그니처는 그대로 보존.</p>
+</main>
+</body>
+</html>

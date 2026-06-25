@@ -1,0 +1,48 @@
+/* Evidence Terminal 토큰 (app/web/static/app.css에서 복제 — 목업용) */
+:root {
+  --font-display: "Noto Serif KR", Georgia, serif;
+  --font-body: "IBM Plex Sans KR", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --fs-1: 0.75rem; --fs-2: 0.85rem; --fs-3: 0.95rem;
+  --fs-4: 1.1rem; --fs-5: 1.4rem; --fs-6: 2rem;
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem;
+  --sp-4: 1rem; --sp-5: 1.5rem; --sp-6: 2.5rem;
+  --radius: 6px; --radius-pill: 999px;
+  --bg: #0e1116; --surface: #161b22; --surface-2: #1c2230;
+  --border: #2a3140; --border-strong: #3a4252;
+  --text-1: #e6edf3; --text-2: #aeb9c7; --text-3: #6e7a8a;
+  --up: #3fb950; --up-bg: rgba(63,185,80,0.12);
+  --down: #f85149; --down-bg: rgba(248,81,73,0.12);
+  --neutral: #8b98a8; --neutral-bg: rgba(139,152,168,0.12);
+  --accent: #e3a008; --accent-bg: rgba(227,160,8,0.12);
+  --conf-high: #3fb950; --conf-med: #d2a106; --conf-low: #6e7a8a;
+  --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.25);
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--font-body); margin: 0;
+  background: var(--bg); color: var(--text-1); line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/* 신선도 배지 (P2) */
+.fresh { font-family: var(--font-mono); font-size: var(--fs-1);
+  padding: 0 var(--sp-2); border-radius: var(--radius-pill); }
+.fresh.live { background: var(--up-bg); color: var(--up); }
+.fresh.recent { background: var(--accent-bg); color: var(--accent); }
+.fresh.stale { background: var(--neutral-bg); color: var(--text-3); }
+/* 방향 이중 인코딩 (P3) — 색 + 부호 */
+.dir { font-family: var(--font-mono); font-weight: 600; }
+.dir.up { color: var(--up); }
+.dir.down { color: var(--down); }
+.dir.neutral { color: var(--neutral); }
+.conf { font-family: var(--font-mono); font-size: var(--fs-1);
+  padding: 0 var(--sp-2); border-radius: var(--radius-pill); border: 1px solid; }
+.conf.high { color: var(--conf-high); border-color: var(--conf-high); background: var(--up-bg); }
+.conf.med  { color: var(--conf-med);  border-color: var(--conf-med);  background: var(--accent-bg); }
+.conf.low  { color: var(--conf-low);  border-color: var(--border-strong); background: var(--neutral-bg); }
+.caption { background: var(--accent-bg); border-left: 3px solid var(--accent);
+  padding: var(--sp-3) var(--sp-4); margin: 0 0 var(--sp-5);
+  font-size: var(--fs-2); color: var(--text-2); border-radius: var(--radius); }
+.caption b { color: var(--accent); }

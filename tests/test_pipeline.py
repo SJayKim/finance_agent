@@ -91,6 +91,7 @@ def _grounded_analyzer(docs: Sequence[SourceDoc]) -> ImpactResult | None:
         event_type="price_move",
         direction="긍정",
         confidence="MED",
+        impact_score=88,
     )
 
 
@@ -107,6 +108,7 @@ def test_analyze_impact_fills_brief_items_and_citations(db: sessionmaker) -> Non
     assert len(items) == 2
     assert all(i.status == "ok" for i in items)
     assert all(i.event_type == "price_move" and i.direction == "긍정" for i in items)
+    assert all(i.impact_score == 88 for i in items)
     assert all(i.analysis_text for i in items)
     assert _citation_count(db) == 2  # 클러스터당 인용 1건
 

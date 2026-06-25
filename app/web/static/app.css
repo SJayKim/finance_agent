@@ -36,7 +36,7 @@
   --border-strong: #3a4252;
   --text-1: #e6edf3;
   --text-2: #aeb9c7;
-  --text-3: #6e7a8a;
+  --text-3: #8a96a6; /* WCAG AA(≈4.6:1): 메타·타임스탬프 대비 상향 (STAGE2 blocker 4) */
 
   --up: #3fb950;
   --up-bg: rgba(63, 185, 80, 0.12);
@@ -157,21 +157,69 @@ a {
   margin: 0;
 }
 
-.date-nav {
+.date-chips {
   display: flex;
-  gap: var(--sp-4);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
   font-family: var(--font-mono);
-  font-size: var(--fs-2);
+  font-size: var(--fs-1);
   margin-top: var(--sp-2);
 }
 
-.date-nav a {
+.date-chip,
+.date-arrow {
   color: var(--text-2);
   text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--surface);
 }
 
-.date-nav a:hover {
+.date-chip:hover,
+.date-arrow:hover {
   color: var(--accent);
+  border-color: var(--accent);
+}
+
+.date-chip.current {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.date-chip.no-data {
+  color: var(--text-3);
+  opacity: 0.5;
+}
+
+.asset-tabs {
+  display: flex;
+  gap: var(--sp-2);
+  margin: var(--sp-5) 0 var(--sp-3);
+}
+
+.asset-tabs button {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2);
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+}
+
+.asset-tabs button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.asset-tabs button.active {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 #theme-toggle {
@@ -710,6 +758,179 @@ button:focus-visible {
   }
   .brief-item summary::before {
     transition: none;
+  }
+}
+
+/* ----------------------------------------------------------- 임팩트 랭킹 보드 (스캔 레이어) */
+.impact-board .board-sub {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-left: var(--sp-2);
+}
+
+.board-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-3);
+}
+
+/* 카드 좌측 색 보더 = 그룹(클러스터). g1~g5 색은 .grp와 공유(아래 재사용). */
+.board-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.board-card:hover,
+.board-card:focus-visible {
+  background: var(--surface-2);
+  outline: none;
+}
+
+.board-card:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.board-card.g1 { border-left-color: var(--accent); }
+.board-card.g2 { border-left-color: #58a6ff; }
+.board-card.g3 { border-left-color: #bc8cff; }
+.board-card.g4 { border-left-color: #ff9f40; }
+.board-card.g5 { border-left-color: #56d364; }
+
+.bc-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.bc-tickers {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-2);
+}
+
+/* 임팩트 정량 스코어 — Mono 대형, 방향색 (STAGE2 blocker 2) */
+.bc-impact {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-4);
+  font-weight: 600;
+}
+
+.bc-impact[data-dir="up"] {
+  color: var(--up);
+}
+
+.bc-impact[data-dir="down"] {
+  color: var(--down);
+}
+
+.bc-impact[data-dir="neutral"] {
+  color: var(--text-2);
+}
+
+.bc-dir {
+  font-size: var(--fs-2);
+}
+
+.bc-dir[data-dir="up"] {
+  color: var(--up);
+}
+
+.bc-dir[data-dir="down"] {
+  color: var(--down);
+}
+
+.bc-dir[data-dir="neutral"] {
+  color: var(--text-2);
+}
+
+.bc-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-1);
+  color: var(--text-3);
+}
+
+.bc-event {
+  font-family: var(--font-mono);
+}
+
+/* 그룹 = 색 + 모양 + G문자 3중 인코딩 (색맹 구분 가능, STAGE2 blocker 1) */
+.grp {
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  margin-right: var(--sp-2);
+  display: inline-block;
+  min-width: 2.6em;
+}
+
+.grp.g1 {
+  color: var(--accent);
+}
+.grp.g2 {
+  color: #58a6ff;
+}
+.grp.g3 {
+  color: #bc8cff;
+}
+.grp.g4 {
+  color: #ff9f40;
+}
+.grp.g5 {
+  color: #56d364;
+}
+
+.tk-none {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+}
+
+.board-legend {
+  color: var(--text-3);
+  font-size: var(--fs-1);
+  line-height: 1.7;
+  margin: var(--sp-3) 0 0;
+}
+
+.board-legend b {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+/* 보드 행 선택 시 대상 브리프 잠깐 강조 */
+@keyframes brief-flash {
+  from {
+    background: var(--accent-bg);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.brief-flash {
+  animation: brief-flash 1.2s ease;
+  border-left-color: var(--accent) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brief-flash {
+    animation: none;
+    background: var(--accent-bg);
   }
 }
 

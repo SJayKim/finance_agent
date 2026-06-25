@@ -1,4 +1,4 @@
-<details class="brief-item status-{{ b.status }}" id="brief-{{ b.id }}"{% if b.direction %} data-dir="{{ {'긍정':'up','부정':'down','중립':'neutral'}.get(b.direction,'neutral') }}"{% endif %}>
+<details class="brief-item status-{{ b.status }}" id="brief-{{ b.id }}" data-asset="{{ ' '.join(b.asset_classes) }}"{% if b.direction %} data-dir="{{ {'긍정':'up','부정':'down','중립':'neutral'}.get(b.direction,'neutral') }}"{% endif %}>
   <summary>
     <span class="event-type">{{ b.event_type or "미분류" }}</span>
     {% if b.direction %}<span class="direction" data-dir="{{ {'긍정':'up','부정':'down','중립':'neutral'}.get(b.direction,'neutral') }}">{{ b.direction }}</span>{% endif %}

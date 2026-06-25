@@ -243,6 +243,7 @@ def analyze_impact(session: Session, brief_date: date, analyzer: ImpactAnalyzer 
         item.event_type = result.event_type
         item.direction = result.direction
         item.confidence = result.confidence
+        item.impact_score = result.impact_score
         item.analysis_text = result.analysis_text
         item.status = "ok"
         session.add_all(

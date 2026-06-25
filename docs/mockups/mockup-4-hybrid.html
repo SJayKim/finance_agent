@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>시안 4 — 하이브리드 (스캔 + 증거 2-레이어)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@700&display=swap" />
+<link rel="stylesheet" href="_tokens.css" />
+<style>
+  /* [blocker 4] --text-3 한 줄 상향 — 메타 텍스트 WCAG AA(≈4.6:1). 토큰 1줄 변경의 목업 반영. */
+  :root { --text-3: #8a96a6; }
+
+  .shell { padding: var(--sp-3) var(--sp-4); }
+  .topbar { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: var(--sp-3); margin-bottom: var(--sp-3); }
+  .topbar h1 { font-family: var(--font-display); font-size: var(--fs-5); margin: 0; }
+  .strip { display: flex; gap: var(--sp-4); margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-2); }
+  .strip span b { color: var(--text-3); font-weight: 400; margin-right: var(--sp-1); }
+
+  /* 필터 바 (스캔 affordance) */
+  .filters { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+  .filters button, .filters input { font-family: var(--font-mono); font-size: var(--fs-1);
+    background: var(--surface); color: var(--text-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: var(--sp-1) var(--sp-3); cursor: pointer; }
+  .filters button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+  .filters .saved { margin-left: auto; }
+
+  /* 2-레이어 그리드: 좌=스캔(랭킹) · 우=증거(드릴다운) */
+  .grid { display: grid; grid-template-columns: 1.05fr 1.55fr; gap: var(--sp-3); align-items: start; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    display: flex; flex-direction: column; }
+  .panel h2 { font-family: var(--font-mono); font-size: var(--fs-1); text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-3); margin: 0; padding: var(--sp-3) var(--sp-3) var(--sp-2);
+    border-bottom: 1px solid var(--border); }
+
+  /* ── 좌: 임팩트 랭킹 보드 (시안 2) ── */
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
+  th, td { text-align: left; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+  th { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); font-weight: 400; }
+  /* [blocker 2] 임팩트 정량 스코어 — Mono 대형, 내림차순 정렬 */
+  td.impact { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right;
+    font-size: var(--fs-4); font-weight: 600; }
+  td.impact.up { color: var(--up); } td.impact.down { color: var(--down); }
+  td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+  tr.sel { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  tr[data-grp]:hover { background: var(--surface-2); cursor: pointer; }
+  .tk { font-family: var(--font-mono); font-weight: 600; }
+  /* [blocker 1] 색-단독 제거 — 모양(●▲■) + 그룹 문자(G1·G2) 동반 인코딩 */
+  .grp { font-family: var(--font-mono); font-size: var(--fs-1); margin-right: var(--sp-2);
+    display: inline-block; min-width: 2.4em; }
+  .grp.g1 { color: var(--accent); } .grp.g2 { color: #58a6ff; } .grp.g3 { color: #bc8cff; }
+  .spark { display: inline-block; vertical-align: middle; }
+  .legend { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3);
+    padding: var(--sp-3); line-height: 1.8; }
+  .legend b { color: var(--text-2); font-weight: 400; }
+
+  /* ── 우: 근거 인과 트리 드릴다운 (시안 3) ── */
+  .detail { padding: var(--sp-4) var(--sp-5); }
+  .rec-root { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap;
+    padding-bottom: var(--sp-3); border-bottom: 1px solid var(--border); }
+  .rec-tk { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-5); }
+  .rec-name { color: var(--text-2); }
+  /* [blocker 2] 드릴다운 헤더에도 임팩트 스코어 대형 */
+  .rec-impact { font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-6);
+    color: var(--up); margin-left: auto; line-height: 1; }
+  /* [major 5] 배지 soup 정리 — 신선도는 칩 벗고 Mono 텍스트 */
+  .fresh-txt { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); }
+  .wiim { font-size: var(--fs-3); margin: var(--sp-3) 0; }
+  .wiim::before { content: "왜 이 종목인가 — "; color: var(--accent); font-family: var(--font-mono); font-size: var(--fs-1); }
+  .contrib { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); margin: var(--sp-3) 0; }
+  .col { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3); }
+  .col h3 { font-family: var(--font-mono); font-size: var(--fs-1); margin: 0 0 var(--sp-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  .col.up { background: var(--up-bg); } .col.up h3 { color: var(--up); }
+  .col.down { background: var(--down-bg); } .col.down h3 { color: var(--down); }
+  .col ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-2); }
+
+  .tree-label { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-top: var(--sp-4); }
+  /* [major 6] 인용 트리가 "트리"로 읽히게 — 가지 border-strong + 루트 stem */
+  .citations { list-style: none; padding-left: var(--sp-2); margin: var(--sp-2) 0 0; position: relative; }
+  .citations::before { content: ""; position: absolute; left: 0; top: 0; bottom: 1.2em; width: 2px;
+    background: var(--border-strong); } /* 한 뿌리에서 갈라지는 수직 stem */
+  .citations > li { position: relative; padding-left: var(--sp-5); padding-bottom: var(--sp-4); }
+  .citations > li::before { content: ""; position: absolute; left: 0; top: 0.8em; width: var(--sp-4);
+    height: 2px; background: var(--border-strong); } /* 가지 */
+  .ev-node { font-family: var(--font-mono); font-size: var(--fs-2); color: var(--text-1); font-weight: 600; }
+  /* [major 8] 한글 이탤릭 합성 제거 — italic 대신 좌측 accent 보더 + 배경/색 */
+  blockquote { margin: var(--sp-2) 0 0; border-left: 3px solid var(--accent); padding: var(--sp-2) var(--sp-3);
+    background: var(--surface-2); border-radius: 0 var(--radius) var(--radius) 0; color: var(--text-1); }
+  .cite-meta { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
+  /* [major 7] 소스 칩 통일 — official/press/blog (신선도 색과 분리) */
+  .src-chip { font-family: var(--font-mono); font-size: var(--fs-1); padding: 0 var(--sp-2); border-radius: var(--radius-pill); }
+  .src-chip.official { background: var(--up-bg); color: var(--up); }
+  .src-chip.press { background: var(--accent-bg); color: var(--accent); }
+  .src-chip.blog { background: var(--neutral-bg); color: var(--text-3); }
+  .kbd { font-family: var(--font-mono); font-size: var(--fs-1); color: var(--text-3); margin-top: var(--sp-4); }
+  .kbd kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+  .disclaimer { font-size: var(--fs-1); color: var(--text-3); margin-top: var(--sp-4);
+    padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <p class="caption">시안 4 · <b>하이브리드(2-레이어)</b> — 시안 2 멀티패널 랭킹(스캔)을 메인,
+    시안 3 근거 인과 트리(증거)를 종목 클릭 드릴다운으로 합침. 선반영 blocker:
+    <b>①</b> 색-단독 그룹 제거(모양+G1/G2) · <b>②</b> 임팩트 정량 스코어(+92 Mono, 내림차순) ·
+    <b>③</b> dead space 해소(우패널 1위 자동 바인딩) · <b>④</b> --text-3 AA 상향 ·
+    <b>⑤</b> 배지 soup 정리 · <b>⑥</b> 인용 트리 stem 강화 · <b>⑦</b> 소스 칩 통일.</p>
+
+  <div class="topbar">
+    <h1>증거 터미널</h1>
+    <div class="strip">
+      <span><b>KOSPI</b> 2,748 <span class="dir up">▲0.9%</span></span>
+      <span><b>S&amp;P</b> 5,610 <span class="dir up">▲0.4%</span></span>
+      <span><b>BTC</b> 71,2k <span class="dir down">▼1.2%</span></span>
+      <span><b>VIX</b> 13.8 <span class="dir down">▼3.1%</span></span>
+    </div>
+  </div>
+
+  <div class="filters">
+    <button class="on">전체</button>
+    <button>실적</button>
+    <button>규제</button>
+    <button>M&amp;A</button>
+    <button>크립토</button>
+    <input type="text" placeholder="종목/티커 필터…" style="min-width:11rem" />
+    <button class="saved">★ 저장된 뷰: 반도체</button>
+  </div>
+
+  <div class="grid">
+    <!-- 좌 레이어: 스캔 — 임팩트 랭킹 보드 -->
+    <section class="panel">
+      <h2>임팩트 랭킹 · 임팩트 내림차순</h2>
+      <table>
+        <thead><tr><th>그룹·종목</th><th>방향</th><th style="text-align:right">임팩트</th><th style="text-align:right">추세</th></tr></thead>
+        <tbody>
+          <tr class="sel" data-grp="1"><td><span class="grp g1">● G1</span><span class="tk">NVDA</span></td><td><span class="dir up">▲</span></td><td class="impact up">+92</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,14 8,12 16,13 24,8 32,6 40,3 48,1" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="1"><td><span class="grp g1">● G1</span><span class="tk">005930</span></td><td><span class="dir up">▲</span></td><td class="impact up">+78</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,12 8,13 16,10 24,9 32,7 40,5 48,4" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="1"><td><span class="grp g1">● G1</span><span class="tk">000660</span></td><td><span class="dir up">▲</span></td><td class="impact up">+71</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,11 8,10 16,11 24,8 32,7 40,6 48,3" fill="none" stroke="#3fb950" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="2"><td><span class="grp g2">▲ G2</span><span class="tk">GOOGL</span></td><td><span class="dir down">▼</span></td><td class="impact down">-64</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,3 8,5 16,4 24,8 32,9 40,12 48,14" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="2"><td><span class="grp g2">▲ G2</span><span class="tk">META</span></td><td><span class="dir down">▼</span></td><td class="impact down">-58</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,4 8,4 16,6 24,7 32,10 40,11 48,13" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+          <tr data-grp="3"><td><span class="grp g3">■ G3</span><span class="tk">BTC</span></td><td><span class="dir down">▼</span></td><td class="impact down">-41</td>
+            <td class="num"><svg class="spark" width="48" height="16"><polyline points="0,6 8,5 16,8 24,7 32,9 40,8 48,11" fill="none" stroke="#f85149" stroke-width="1.5"/></svg></td></tr>
+        </tbody>
+      </table>
+      <p class="legend"><b>그룹</b> ● G1 반도체 · ▲ G2 빅테크 · ■ G3 크립토 —
+        색 + 모양 + 문자 3중 인코딩(색맹 구분 가능).<br>행 선택 → 우측 근거 트리 동기화.</p>
+    </section>
+
+    <!-- 우 레이어: 증거 — 선택 종목 근거 인과 트리 (1위 자동 바인딩) -->
+    <section class="panel">
+      <h2><span class="grp g1">● G1</span>NVDA · 근거 인과 트리</h2>
+      <div class="detail">
+        <div class="rec-root">
+          <span class="rec-tk">NVDA</span>
+          <span class="rec-name">NVIDIA · NASDAQ</span>
+          <span class="dir up">▲ 긍정</span>
+          <span class="conf high">신뢰 HIGH</span>
+          <span class="rec-impact">+92</span>
+        </div>
+        <p class="fresh-txt" style="margin:var(--sp-2) 0 0">최신 근거 14분 전 · LIVE</p>
+
+        <p class="wiim">분기 매출 컨센서스 12% 상회 — AI 데이터센터 수요 가속이 반도체 밸류체인 전반에 상방 압력.</p>
+
+        <div class="contrib">
+          <div class="col up">
+            <h3>▲ 상방 기여</h3>
+            <ul>
+              <li>데이터센터 매출 154%↑ (가중 0.42)</li>
+              <li>HBM 공급 부족 2026까지 (가중 0.31)</li>
+              <li>모건스탠리 목표가 상향 (가중 0.12)</li>
+            </ul>
+          </div>
+          <div class="col down">
+            <h3>▼ 하방 기여</h3>
+            <ul>
+              <li>중국 메모리 증설 리스크 (가중 0.09)</li>
+              <li>환율 변동성 (가중 0.06)</li>
+            </ul>
+          </div>
+        </div>
+
+        <p class="tree-label">근거 트리 (추천 → 이벤트 → 소스 + 발행시각)</p>
+        <ul class="citations">
+          <li>
+            <span class="ev-node">이벤트 · 실적 서프라이즈</span>
+            <blockquote>"엔비디아 데이터센터 부문 매출이 전년 대비 154% 증가하며 사상 최고치를 기록했다."</blockquote>
+            <div class="cite-meta">
+              <span class="src-chip official">공식·IR</span>
+              <span class="mono" style="color:var(--text-3)">NVIDIA IR · 06-24 06:40</span>
+              <span class="fresh-txt">· 14분 전</span>
+              <a href="#">원문 ↗</a>
+            </div>
+          </li>
+          <li>
+            <span class="ev-node">이벤트 · 공급망</span>
+            <blockquote>"HBM 공급 부족이 2026년까지 지속될 전망 — 메모리 3사 수혜."</blockquote>
+            <div class="cite-meta">
+              <span class="src-chip press">언론</span>
+              <span class="mono" style="color:var(--text-3)">연합인포맥스 · 06-24 07:55</span>
+              <span class="fresh-txt">· 1시간 전</span>
+              <a href="#">원문 ↗</a>
+            </div>
+          </li>
+          <li>
+            <span class="ev-node">이벤트 · 애널리스트</span>
+            <blockquote>"모건스탠리, 메모리 업황 회복을 근거로 목표가 상향."</blockquote>
+            <div class="cite-meta">
+              <span class="src-chip blog">리서치 블로그</span>
+              <span class="mono" style="color:var(--text-3)">06-24 05:10</span>
+              <span class="fresh-txt">· 3시간 전</span>
+              <a href="#">원문 ↗</a>
+            </div>
+          </li>
+        </ul>
+
+        <p class="kbd"><kbd>↑</kbd><kbd>↓</kbd> 종목 이동 · <kbd>Enter</kbd> 본문 · <kbd>Esc</kbd> 닫기</p>
+        <p class="disclaimer">추천은 투자 권유가 아니라 현재 뉴스 기준 영향도 분석입니다.
+          근거(어떤 뉴스·이벤트)와 발행 시각을 항상 함께 표기합니다.</p>
+      </div>
+    </section>
+  </div>
+
+  <p class="caption" style="margin-top:var(--sp-3)"><b>설계 노트</b> — 좌 레이어(스캔)에서 "무엇부터 보냐"를
+    임팩트 내림차순으로 답하고, 행 선택 → 우 레이어(증거)에서 "믿어도 되나·왜 움직이나"를 근거 인과 트리로 답한다.
+    시안 2="Evidence 없는 Terminal" + 시안 3="스캔 안 되는 Evidence"를 한 제품의 두 레이어로 합침.
+    좌→우 동기화와 다중 필터만 경량 JS island, 나머지는 현 HTMX 조각 재사용.</p>
+</div>
+</body>
+</html>

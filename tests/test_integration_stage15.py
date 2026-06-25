@@ -12,7 +12,7 @@ FakeEmbedder는 결정론적 — 같은 텍스트는 같은 정규화 벡터(코
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -25,7 +25,11 @@ from app.pipeline.embed import embed_documents
 from app.runner import run_daily
 from app.web.queries import search_citation_spans
 
-_BRIEF_DATE = date(2026, 6, 22)
+# 프로덕션(runner.main)처럼 KST 오늘을 기준일로 쓴다. run_daily가 수집한 문서는
+# fetched_at=now()로 적재되므로, _count_embedded의 brief_date 윈도(KST 종일)에 들려면
+# 기준일이 오늘이어야 한다. 고정 과거일이면 그날 외엔 embedded 카운트가 0이 돼 깨진다.
+_KST = timezone(timedelta(hours=9))
+_BRIEF_DATE = datetime.now(_KST).date()
 
 # 명확히 구별되는 세 문서(제목+요약). embed 텍스트가 서로 멀어 정확-텍스트 질의의 rank 1이 안정.
 _DOCS = [

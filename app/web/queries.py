@@ -45,6 +45,16 @@ class TickerView:
     is_candidate: bool
 
 
+def _asset_classes(tickers: list[TickerView]) -> list[str]:
+    """티커들의 market을 자산 분류로 매핑한 정렬된 distinct 리스트.
+
+    CRYPTO→"crypto", 그 외(KR·US)→"stock". 티커 없으면 [](전체 탭에서만 노출).
+    한 brief에 자산이 섞이면 둘 다 반환 → 양쪽 탭 모두 노출.
+    """
+    classes = {"crypto" if t.market == "CRYPTO" else "stock" for t in tickers}
+    return sorted(classes)
+
+
 @dataclass(frozen=True)
 class BriefView:
     """brief_item 1건의 추적성 뷰: 항목 메타 + 종목 + 인용 근거."""
@@ -58,6 +68,8 @@ class BriefView:
     generated_at: datetime
     tickers: list[TickerView]
     citations: list[CitationView]
+    impact_score: int | None = None  # 임팩트 크기 0~100(랭킹 보드 정렬 키). None=미분석.
+    cluster_id: int | None = None  # 그룹(색·모양 인코딩)으로 묶는 클러스터 id.
 
     @property
     def last_updated(self) -> datetime:
@@ -65,6 +77,11 @@ class BriefView:
         times = [self.generated_at]
         times += [c.source_published_at for c in self.citations if c.source_published_at]
         return max(times)
+
+    @property
+    def asset_classes(self) -> list[str]:
+        """자산 탭 필터용 분류(crypto/stock). 티커 없으면 [](전체 탭에서만 노출)."""
+        return _asset_classes(self.tickers)
 
 
 def load_brief(session: Session, brief_date: date) -> list[BriefView]:
@@ -122,9 +139,71 @@ def load_brief(session: Session, brief_date: date) -> list[BriefView]:
             generated_at=item.generated_at,
             tickers=tickers_by_item[item.id],
             citations=citations_by_item[item.id],
+            impact_score=item.impact_score,
+            cluster_id=item.cluster_id,
         )
         for item in items
     ]
+
+
+@dataclass(frozen=True)
+class BoardRow:
+    """임팩트 랭킹 보드 1행(이벤트 단위). 그룹=클러스터, 색+모양+문자 3중 인코딩."""
+
+    brief_id: int
+    group_label: str  # "G1" 등 (날짜 내 클러스터 등장 순서)
+    group_shape: str  # ●/▲/■ (색맹 구분용 모양 인코딩)
+    group_index: int  # 1..N (색 클래스 g1..gN 선택; 팔레트 크기로 순환 — 모양과 같은 주기)
+    impact_score: int
+    direction: str | None
+    event_type: str | None
+    tickers: list[TickerView]
+
+    @property
+    def asset_classes(self) -> list[str]:
+        """자산 탭 필터용 분류(crypto/stock). 티커 없으면 [](전체 탭에서만 노출)."""
+        return _asset_classes(self.tickers)
+
+
+_GROUP_SHAPES = ["●", "▲", "■", "◆", "★"]
+
+
+def dates_with_briefs(session: Session) -> set[date]:
+    """brief_item이 하나라도 있는 brief_date의 set (날짜 칩 has_data 판정용, 순수 SELECT)."""
+    return set(session.execute(select(BriefItem.brief_date).distinct()).scalars())
+
+
+def rank_board(briefs: Sequence[BriefView]) -> list[BoardRow]:
+    """분석된 브리프(status=ok·impact_score 있음)를 임팩트 내림차순 보드 행으로 (순수).
+
+    임팩트 스코어는 이벤트(brief_item)당 1개라 행도 이벤트 단위다 — 티커별 점수는
+    데이터에 없으므로 만들지 않는다(zero-fabrication). 그룹 라벨(G1..)은 클러스터가
+    보드에 등장하는 순서대로 부여하고, 색+모양을 함께 입혀 색맹도 구분 가능하게 한다.
+    """
+    scored = sorted(
+        (b for b in briefs if b.impact_score is not None and b.status == "ok"),
+        key=lambda b: b.impact_score or 0,
+        reverse=True,
+    )
+    group_of: dict[int | None, int] = {}
+    rows: list[BoardRow] = []
+    for b in scored:
+        if b.cluster_id not in group_of:
+            group_of[b.cluster_id] = len(group_of) + 1
+        gi = group_of[b.cluster_id]
+        rows.append(
+            BoardRow(
+                brief_id=b.id,
+                group_label=f"G{gi}",
+                group_shape=_GROUP_SHAPES[(gi - 1) % len(_GROUP_SHAPES)],
+                group_index=(gi - 1) % len(_GROUP_SHAPES) + 1,
+                impact_score=b.impact_score or 0,
+                direction=b.direction,
+                event_type=b.event_type,
+                tickers=b.tickers,
+            )
+        )
+    return rows
 
 
 def search_citation_spans(
