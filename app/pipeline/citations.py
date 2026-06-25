@@ -90,7 +90,8 @@ _PASS2_SCHEMA: dict[str, Any] = {
         "event_type": {"type": "string"},  # taxonomy STAGE0-BLOCKED → 자유 문자열
         "direction": {"type": "string", "enum": ["긍정", "부정", "중립"]},
         "confidence": {"type": "string", "enum": ["HIGH", "MED", "LOW"]},
-        "impact_score": {"type": "integer", "minimum": 0, "maximum": 100},
+        # min/max는 Anthropic structured-output이 integer에 미지원(400). 범위는 _PASS2_SYSTEM이 지시.
+        "impact_score": {"type": "integer"},
     },
     "required": ["event_type", "direction", "confidence", "impact_score"],
     "additionalProperties": False,

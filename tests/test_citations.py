@@ -15,6 +15,7 @@ import anthropic
 import httpx
 
 from app.pipeline.citations import (
+    _PASS2_SCHEMA,
     SourceDoc,
     _build_documents,
     _document_text,
@@ -142,3 +143,12 @@ def test_analyzer_returns_none_on_api_error() -> None:
 
     client = cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
     assert anthropic_analyzer(client, "m")([_doc(10)]) is None
+
+
+def test_pass2_schema_has_no_unsupported_integer_bounds() -> None:
+    # Anthropic structured-output은 integer 타입에 minimum/maximum을 미지원(400 BadRequest).
+    # 넣으면 pass2가 매번 APIError로 죽어 impact_score가 항상 None이 된다(라이브 회귀).
+    score = _PASS2_SCHEMA["properties"]["impact_score"]
+    assert score["type"] == "integer"
+    assert "minimum" not in score
+    assert "maximum" not in score
