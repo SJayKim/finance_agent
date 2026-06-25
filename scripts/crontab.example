@@ -1,0 +1,11 @@
+# finance_agent daily run -- crontab example (Linux/VM). Install with: crontab -e
+#
+# TZ NOTE: brief_date and freshness cutoffs are computed in KST (_KST in app/runner.py),
+# but cron fires in the SERVER's timezone. Pick the ONE line matching your server TZ.
+# KST = UTC+9, no DST.
+
+# Server in KST (Asia/Seoul) -- fire at 06:40 KST:
+40 6 * * * cd /path/to/finance_agent && uv run python -m app.runner >> logs/daily.log 2>&1
+
+# Server in UTC -- 06:40 KST == 21:40 UTC the previous day:
+# 40 21 * * * cd /path/to/finance_agent && uv run python -m app.runner >> logs/daily.log 2>&1
