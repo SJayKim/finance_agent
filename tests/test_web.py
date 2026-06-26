@@ -360,6 +360,16 @@ def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:
     assert "브리프 없음" in resp.text
 
 
+def test_dashboard_default_date_falls_back_to_latest_data(db: sessionmaker) -> None:
+    """?date 미지정 + 오늘 데이터 없음 → 데이터 있는 최신일로 폴백(빈 보드 방지). P4 회귀."""
+    _seed_brief(db)  # 과거 _BRIEF_DATE에만 시드, 오늘(KST)엔 데이터 없음
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "브리프 없음" not in body  # 오늘(빈 보드)이 아니라 최신 데이터일로 떨어져야
+    assert "price_move" in body  # _BRIEF_DATE에 시드된 브리프가 렌더됨
+
+
 def test_dashboard_rejects_bad_date(db: sessionmaker) -> None:
     assert client.get("/?date=not-a-date").status_code == 400
 

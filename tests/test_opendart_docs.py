@@ -109,6 +109,33 @@ def test_fetch_sends_key_and_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "본문" in payloads[0]["body"]
 
 
+_DOC_NO_FILE = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    b"<result><status>014</status><message>file</message></result>"
+)
+
+
+def test_fetch_skips_filings_without_original_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """document.xml이 ZIP 대신 XML 에러(status 014)면 그 공시만 건너뛰고 소스는 계속(BadZipFile 회귀)."""
+    monkeypatch.setattr(settings, "opendart_api_key", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("list.json"):
+            return httpx.Response(200, content=_SAMPLE_LIST_BYTES)
+        # 첫 공시는 원본파일 없음(014), 둘째는 정상 ZIP
+        if request.url.params.get("rcept_no") == "20240101000001":
+            return httpx.Response(200, content=_DOC_NO_FILE)
+        return httpx.Response(200, content=_sample_doc_zip("본문"))
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        connector = OpenDartDocsConnector(throttle_s=0.0, client=client)
+        payloads = list(connector.fetch())
+
+    assert len(payloads) == 1  # 014는 건너뛰고 ZIP 1건만
+    assert payloads[0]["meta"]["rcept_no"] == "20240101000002"
+    assert "본문" in payloads[0]["body"]
+
+
 def test_fetch_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "opendart_api_key", None)
     connector = OpenDartDocsConnector()

@@ -127,8 +127,13 @@ class OpenDartDocsConnector(Connector):
         ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         return httpx.Client(timeout=30.0, verify=ctx)
 
-    def _get_document_zip(self, http: httpx.Client, rcept_no: str) -> bytes:
-        """document.xml ZIP을 받는다. 429/타임아웃에 백오프 재시도(최대 2회)."""
+    def _get_document_zip(self, http: httpx.Client, rcept_no: str) -> bytes | None:
+        """document.xml ZIP을 받는다. 429/타임아웃에 백오프 재시도(최대 2회).
+
+        원본파일이 없는 공시(자동생성·요약 공시 등)는 document.xml이 ZIP 대신
+        <status>014</status> 같은 XML 에러를 200으로 돌려준다 → None을 반환해 호출자가
+        건너뛰게 한다(소스 전체를 BadZipFile로 죽이지 않는다). ZIP은 항상 "PK"로 시작.
+        """
         params = {"crtfc_key": settings.opendart_api_key, "rcept_no": rcept_no}
         for attempt in range(3):  # 최초 1회 + 재시도 2회
             try:
@@ -138,6 +143,8 @@ class OpenDartDocsConnector(Connector):
                         "429 Too Many Requests", request=resp.request, response=resp
                     )
                 resp.raise_for_status()
+                if not resp.content.startswith(b"PK"):
+                    return None  # 원본파일 없음(XML 에러) → 본문 grounding 불가, 건너뜀
                 return resp.content
             except (httpx.TimeoutException, httpx.HTTPStatusError):
                 if attempt == 2:
@@ -167,6 +174,8 @@ class OpenDartDocsConnector(Connector):
                 if i > 0:
                     time.sleep(self.throttle_s)  # document 호출 사이 throttle(§5)
                 zip_bytes = self._get_document_zip(http, meta["rcept_no"])
+                if zip_bytes is None:
+                    continue  # 원본파일 없는 공시 — 본문 없음, 건너뜀
                 body = extract_body_from_zip(zip_bytes)
                 yield {"meta": meta, "body": body}
         finally:

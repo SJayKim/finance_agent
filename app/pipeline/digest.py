@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, cast
 
@@ -208,7 +208,7 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                 return []
             pass2 = client.messages.create(
                 model=model,
-                max_tokens=2048,
+                max_tokens=4096,  # 2048은 많은 ok 항목 집계 시 JSON이 잘림 → 헤드룸 확보
                 system=_PASS2_SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
@@ -234,8 +234,10 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                     )
                 )
             return sections
-        except anthropic.APIError:
-            return None  # 쿼터 소진·장애 → degraded
+        except (anthropic.APIError, json.JSONDecodeError):
+            # APIError: 쿼터 소진·장애. JSONDecodeError: 패스2 구조화 JSON 잘림(max_tokens)
+            # — 둘 다 환각 대신 degraded로 떨어뜨려 daily_run 전체를 죽이지 않는다(§10).
+            return None
 
     return digest
 
@@ -353,9 +355,24 @@ def build_digest(session: Session, brief_date: date, digester: Digester | None =
         )
         return
 
+    # LLM 패스2가 같은 section 키를 여러 번 낼 수 있다(macro를 두 섹션으로 쪼개는 등) →
+    # uq_daily_digests_date_section 위반. 적재 전 키별로 병합한다: 본문을 이어붙이고 근거
+    # brief_item을 합친다(CLAUDE.md: unique 키는 적재 전 병합). 첫 등장 순서를 보존.
+    merged: dict[str, DigestSection] = {}
     for sec in sections:
         if not sec.citations:
             continue  # 인용 0 섹션은 쓰지 않는다(zero-fabrication).
+        prev = merged.get(sec.section)
+        if prev is None:
+            merged[sec.section] = sec
+        else:
+            merged[sec.section] = replace(
+                prev,
+                body_text=f"{prev.body_text}\n\n{sec.body_text}",
+                source_brief_item_ids=[*prev.source_brief_item_ids, *sec.source_brief_item_ids],
+            )
+
+    for sec in merged.values():
         digest_row = DailyDigest(
             brief_date=brief_date,
             section=sec.section,

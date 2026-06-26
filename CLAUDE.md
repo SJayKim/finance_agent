@@ -80,6 +80,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - API 키를 쿼리스트링으로 받는 외부 API(OpenDART `crtfc_key` 등)는 httpx INFO 로깅이 URL을 통째로 찍어 키를 노출한다. 러너에서 `logging.getLogger("httpx").setLevel(logging.WARNING)`로 억제할 것. (2026-06-22, app/pipeline/opendart.py main)
 - Windows CLI 진입점에서 비-ASCII(한글·em dash 등)를 `print`하면 cp949 stdout이 `UnicodeEncodeError`로 죽는다(실측: 소스 에러 메시지의 `—` → run_daily 데이터는 다 커밋됐는데 CLI가 exit 1). `main()` 진입부에서 `sys.stdout.reconfigure(encoding="utf-8")` 호출할 것. (2026-06-23, app/runner.py main)
 - sentence-transformers(`SentenceTransformer(...)`, app/embed/__init__.py)는 모델이 로컬 캐시에 있어도 로드 시 HF 허브로 메타데이터 HEAD 요청을 보낸다. 서버 프로세스에 truststore가 주입돼 있지 않으면 사내 TLS 가로채기로 `CERTIFICATE_VERIFY_FAILED` → cumulative `/chat` 첫 요청이 500. 서버는 네트워크가 불필요(캐시만 쓰면 됨)하므로 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`로 띄울 것. 모델 최초 다운로드(임베딩 백필)만 `truststore.inject_into_ssl()` 필요. (2026-06-23, app/embed/__init__.py / app/main.py)
+- OpenDART `document.xml`은 원본파일 없는 공시(자동생성·요약 공시 등)에 ZIP 대신 `<status>014</status>` XML을 **200**으로 반환한다(실측 2026-06-26: 100건 중 34건). 무조건 unzip하면 `BadZipFile`로 **소스 전체가 error**가 된다. ZIP 매직(`resp.content`가 `b"PK"`로 시작)을 검사해 비-ZIP이면 그 공시만 건너뛸 것. (2026-06-26, app/collector/opendart_docs.py)
+- publisher RSS 피드는 기본 httpx UA에 **403**을 주거나(예: `mk.co.kr`) 엔드포인트가 폐지될 수 있다(예: `feeds.reuters.com` ConnectError). RssConnector는 한 피드 실패가 `raise_for_status()`로 소스 전체를 죽이므로, 브라우저 User-Agent 헤더를 보내고(403 회피) 죽은 피드는 `DEFAULT_FEEDS`에서 제거할 것. (2026-06-26, app/collector/rss.py)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
