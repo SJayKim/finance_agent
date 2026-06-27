@@ -1,0 +1,56 @@
+name: daily
+
+# 일일 자동 실행(클라우드). 로컬 schtasks 대체. DB는 매니지드 Postgres+pgvector
+# (Supabase/Neon 등)를 DATABASE_URL 시크릿으로 주입한다 — Actions service 컨테이너는
+# job 종료 시 삭제돼 일일 누적(dedup·랭킹)에 못 쓴다.
+#
+# 주의:
+# - cron은 UTC. 06:40 KST(UTC+9) = 21:40 UTC(전날) → "40 21 * * *".
+# - schedule은 default 브랜치(main)에서만 동작 → 이 파일이 main에 있어야 활성화.
+# - schedule은 best-effort(고부하 시 지연·드물게 스킵). repo 60일 무활동 시 자동 비활성.
+# - 임베딩 extra 미설치 → get_embedder()가 graceful None(RAG 코퍼스 적재만 스킵).
+on:
+  schedule:
+    - cron: "40 21 * * *"
+  workflow_dispatch:
+
+# 이전 실행이 안 끝났으면 겹치지 않게(앱 내부 advisory lock과 별개의 1차 방어).
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # 필수: 매니지드 Postgres+pgvector 접속 문자열(sqlalchemy psycopg 형식).
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # 선택: 미설정 시 빈 값 → 해당 소스/분석은 비활성(소스 격리로 skip).
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
+      SEC_EDGAR_USER_AGENT: ${{ secrets.SEC_EDGAR_USER_AGENT }}
+      OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
+      COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+      MARKETAUX_API_KEY: ${{ secrets.MARKETAUX_API_KEY }}
+      FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies (embeddings extra 미설치 — 클라우드 일일은 RAG embed 스킵)
+        run: uv sync
+
+      - name: DB migrations (alembic upgrade head)
+        run: uv run alembic upgrade head
+
+      - name: Daily run
+        run: uv run python -m app.runner
