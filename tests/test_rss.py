@@ -1,5 +1,7 @@
 from datetime import timezone
 
+import httpx
+
 from app.collector.rss import RssConnector, parse_feed
 from app.pipeline.dedup import near_duplicate_groups
 
@@ -111,6 +113,32 @@ def test_normalize_uses_feed_lang_not_hardcoded() -> None:
     conn = RssConnector()
     doc = conn.normalize(parse_feed("federalreserve", "en", FED_XML)[0])
     assert doc.lang == "en"
+
+
+def test_fetch_isolates_failing_feed() -> None:
+    # 매경(mk.co.kr)이 403이어도 앞(cointelegraph)·뒤(federalreserve) 피드는 수집돼야 한다.
+    # 한 피드 실패가 전체를 죽이거나 뒤 순번을 건너뛰게 하던 회귀 방지.
+    feeds = {
+        "cointelegraph": {"url": "https://cointelegraph.com/rss", "lang": "en"},
+        "maeil": {"url": "https://www.mk.co.kr/rss/30100041/", "lang": "ko"},
+        "federalreserve": {"url": "https://www.federalreserve.gov/feeds/press_all.xml", "lang": "en"},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "www.mk.co.kr":
+            return httpx.Response(403)
+        if request.url.host == "cointelegraph.com":
+            return httpx.Response(200, content=CT_XML)
+        return httpx.Response(200, content=FED_XML)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        conn = RssConnector(feeds, client=client)
+        items = list(conn.fetch())  # 403에도 raise 없이 완주
+
+    sources = {it["source"] for it in items}
+    assert "cointelegraph" in sources
+    assert "federalreserve" in sources
+    assert "maeil" not in sources
 
 
 def test_cross_source_syndication_dedup() -> None:

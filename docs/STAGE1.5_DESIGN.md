@@ -107,7 +107,7 @@
 
 | 소스 | 유형 | 본문? | 신규 커넥터 | 비고 |
 | --- | --- | --- | --- | --- |
-| 네이버 검색 오픈API | KR 뉴스 | ✗(요약만) | `collector/naver.py` | 키 2개 이미 config에 있음. 쿼터 = 키워드수×예산. 쿼리는 커버리지 종목/섹터 키워드+별칭. |
+| 네이버 검색 오픈API | KR 뉴스 | ✗(요약만) | `collector/naver.py` | 키 2개 이미 config에 있음. 쿼터 = 키워드수×예산. **구현됨:** 쿼리는 `load_coverage_queries`가 coverage 섹터 ∪ 커버 종목 별칭에서 도출(하드코딩 없음, 빈 DB → no-op). |
 | KR 경제지 RSS | KR 뉴스 | ✗ | `rss.py` 피드 추가 | 한경·매경 등 공개 RSS. `DEFAULT_FEEDS`에 KR 피드 dict 추가, `lang="ko"` 분기. |
 | 글로벌 매크로 RSS | 매크로 | ✗ | `rss.py` 피드 추가 | 연준/ECB 보도자료 RSS, 로이터/주요 매체 공개 RSS. `lang="en"`. |
 | OpenDART 공시 | KR 공시 | **✓ 본문** | `collector/opendart_docs.py` | **현 opendart.py는 별칭 시더라 별개 모듈.** list+document 엔드포인트. 일 2만건+throttling 게이트. 불변→캐싱/증분. |
@@ -130,7 +130,8 @@
 - 동시성 가드는 기존 `pg_try_advisory_lock` 재사용(중복 실행 차단).
 - 스케줄: STAGE1 §3대로 **OS cron**. 수집 06:40 KST(야간 미국장 이벤트 포함, §5.7) →
   다이제스트 07:00. Windows 로컬이면 작업 스케줄러, 배포 VM이면 cron.
-- `/trigger`도 `run_daily`로 승격(수집까지 포함)하거나, `/collect`+`/trigger` 분리.
+- **채택:** `/trigger`(파이프라인 전용 빠른 경로) **유지** + `/run-daily` **신설**(수집까지
+  포함한 일일 1회 실행). 승격/분리 대신 두 라우트 병존(`main.py`).
 
 > **검증 B:** 한 소스가 장애(타임아웃·쿼터)나도 나머지 수집·파이프라인은 계속(소스 격리,
 > STAGE1 §3 Collector/Pipeline 분리 취지). 실패 소스는 `audit_log`에 기록 + 다이제스트에
@@ -160,7 +161,10 @@
 3. **RAG 채팅**(`web/chat.py` 확장): 질문 임베딩 → pgvector 유사도 top-k **citations/brief_items**
    검색(전 날짜) → 그 cited_text span을 citable document로 Citations API에 주입 → 현재와
    동일하게 인용 0이면 거부. 즉 현재 "그날 전체 인용" 대신 "검색으로 고른 인용"을 먹인다.
-   - **검색 대상은 citations(cited_text)** 우선 — 이미 zero-fabrication ground truth라 경계가 안 깨짐.
+   - **구현:** 랭킹은 `raw_documents`의 **문서 임베딩(제목+요약, `document_embed_text`)** 코사인
+     유사도로 하고(`search_citation_spans`), 가까운 문서의 **citation span(cited_text)을 Citations
+     API에 먹인다**. 인용 span 자체에 임베딩을 두지 않고 문서 임베딩으로 검색 → 그 문서의 인용을
+     주입하는 구조. 인용은 zero-fabrication ground truth라 경계가 안 깨짐.
 
 > **검증 D:** "이번 주 반도체 흐름" 류 cross-date 질문에 여러 날짜 인용이 섞여 답변+인용.
 > 코퍼스에 없는 주제 질문 → "관련 근거 없음"(거부). 검색 top-k가 인용 0개만 물어오면 거부.

@@ -1,5 +1,13 @@
 # 증거 브리프 대시보드 — 추적성 뷰 + 근거기반 채팅
 
+## 구현 후 변경점(사후)
+이 문서는 착수 시점(one-shot) 스펙이라 본문은 당시 상태로 둔다. 구현 후 달라진 점만 여기 기록:
+- **레이아웃 순서:** 채팅이 상단 → **하단**으로 이동(`docs/STAGE1_DASHBOARD_REDESIGN.md` 참조).
+- **`/run-daily` 추가**(수집 포함 일일 실행) + 누적 RAG 채팅·임베딩 구현됨 — 원 Out-of-Scope에서
+  STAGE1.5로 당겨짐.
+- **`answer()` 커링됨:** `anthropic_chat(client, model)` → `answer(question, brief_views)`
+  (`app/web/chat.py`).
+
 ## Context
 파이프라인이 라이브로 `brief_items`를 채우기 시작했지만(실측 8건/citations 20건) `/` 라우트는 플레이스홀더만 렌더한다(`app/main.py:41-43`, `index.html`). 애널리스트가 "이 종목 추천이 어떤 뉴스를 기준으로 어떤 근거(인용·발행시각·이벤트·방향·신뢰도)로 나왔는지" 확인할 화면이 없다. 추적성은 이 제품의 신뢰 1차 조건(§10, PAIN_POINT §3-1). 여기에 자유 자연어 질의에 근거기반으로 답하는 채팅을 더한다.
 

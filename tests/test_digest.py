@@ -130,6 +130,37 @@ def test_digester_maps_document_index_to_brief_item() -> None:
     assert len(calls) == 2
 
 
+def test_digester_merges_duplicate_section_keys() -> None:
+    """같은 section 키(예: 크립토 일색인 날 macro 두 개)는 하나로 합친다 — uq 위반 방지, 첫 heading 유지."""
+    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence one")])])
+    pass2 = SimpleNamespace(
+        content=[
+            _text_block(
+                '{"sections": ['
+                '{"section": "macro", "heading": "금리", "body_text": "첫째 테마"},'
+                '{"section": "macro", "heading": "환율", "body_text": "둘째 테마"}'
+                "]}"
+            )
+        ]
+    )
+    client, _ = _fake_client([pass1, pass2])
+    sections = anthropic_digester(client, "m")([_input(1, ["a"])])
+    assert sections is not None and len(sections) == 1
+    sec = sections[0]
+    assert sec.section == "macro"
+    assert sec.heading == "금리"  # 첫 heading 유지
+    assert "첫째 테마" in sec.body_text and "둘째 테마" in sec.body_text  # body 합쳐짐
+
+
+def test_digester_returns_none_on_malformed_json() -> None:
+    """패스2 JSON이 잘리거나(토큰 한도) 깨지면 None(degraded) — build_digest를 크래시시키지 않는다."""
+    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence one")])])
+    # max_tokens에서 잘린 JSON: 문자열이 닫히지 않음(실측 Unterminated string 회귀).
+    pass2 = SimpleNamespace(content=[_text_block('{"sections": [{"section": "macro", "body_text": "잘린')])
+    client, _ = _fake_client([pass1, pass2])
+    assert anthropic_digester(client, "m")([_input(1, ["a"])]) is None
+
+
 def test_digester_returns_none_on_api_error() -> None:
     def create(**kwargs: Any) -> Any:
         raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api"))
