@@ -1,0 +1,22 @@
+# Fly.io 대시보드 배포 설정. DB(Supabase)는 ap-northeast-1(도쿄)이라 같은 nrt 리전으로 지연 최소.
+# 비밀(DATABASE_URL, ANTHROPIC_API_KEY)은 여기 두지 말고 `flyctl secrets set`으로 주입.
+app = "finance-agent-dashboard"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # 유휴 시 정지해 비용 절감. 요청이 오면 자동 기동(서버 시작은 빠름 — bge-m3는 첫 누적
+  # 채팅에서 lazy 로드라 콜드스타트 자체엔 영향 적음).
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+# bge-m3(~560M params, fp32)를 CPU로 로드하려면 ~2.5GB RAM 필요 → 4GB로 여유.
+[[vm]]
+  memory = "4gb"
+  cpu_kind = "shared"
+  cpus = 2

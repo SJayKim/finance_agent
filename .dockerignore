@@ -1,0 +1,21 @@
+# 빌드 컨텍스트 최소화 — 이미지/전송 크기 줄이고 .env 같은 비밀 유출 방지.
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.egg-info
+.env
+CLAUDE.local.md
+.claude
+.gstack
+logs
+docs
+tests
+scratchpad
+Dockerfile
+.dockerignore
