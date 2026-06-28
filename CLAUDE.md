@@ -82,6 +82,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Windows CLI 진입점에서 비-ASCII(한글·em dash 등)를 `print`하면 cp949 stdout이 `UnicodeEncodeError`로 죽는다(실측: 소스 에러 메시지의 `—` → run_daily 데이터는 다 커밋됐는데 CLI가 exit 1). `main()` 진입부에서 `sys.stdout.reconfigure(encoding="utf-8")` 호출할 것. (2026-06-23, app/runner.py main)
 - `brief_date`는 KST 기준일(run_daily가 `datetime.now(_KST).date()`로 산출)이다. 날짜 경계·신선도 컷오프를 UTC 자정으로 잡으면 KST 오전에 돌린 수집분(전날 저녁~당일 새벽 UTC 발행)이 컷오프 위로 밀려 통째로 잘려 클러스터·브리프가 0이 된다(빈 다이제스트, 실측: 132건 수집에도 후보 0건). 종일 경계는 KST로 앵커할 것(`tzinfo=_KST`). (2026-06-23, app/pipeline/pipeline.py _freshness_cutoff)
 - sentence-transformers(`SentenceTransformer(...)`, app/embed/__init__.py)는 모델이 로컬 캐시에 있어도 로드 시 HF 허브로 메타데이터 HEAD 요청을 보낸다. 서버 프로세스에 truststore가 주입돼 있지 않으면 사내 TLS 가로채기로 `CERTIFICATE_VERIFY_FAILED` → cumulative `/chat` 첫 요청이 500. 서버는 네트워크가 불필요(캐시만 쓰면 됨)하므로 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`로 띄울 것. 모델 최초 다운로드(임베딩 백필)만 `truststore.inject_into_ssl()` 필요. (2026-06-23, app/embed/__init__.py / app/main.py)
+- alembic `migrations/env.py`에서 DB 접속 문자열을 `config.set_main_option("sqlalchemy.url", …)`/`get_section`(configparser)으로 왕복시키면, URL-인코딩된 비밀번호의 `%`(`%40` 등)를 configparser BasicInterpolation이 보간 문법으로 오인해 `ValueError: invalid interpolation syntax`로 env.py import 단계에서 죽는다(특수문자 비밀번호의 매니지드 DB에서 무조건 재현). URL은 configparser에 넣지 말고 `create_engine(settings.database_url, …)`로 직접 넘길 것. (2026-06-28, migrations/env.py run_migrations_online)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->
