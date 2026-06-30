@@ -40,6 +40,17 @@ _SAMPLE_LIST_BYTES = json.dumps(_SAMPLE_LIST).encode("utf-8")
 
 _NO_DATA = {"status": "013", "message": "조회된 데이터가 없습니다."}
 
+# document.xml이 ZIP 대신 주는 에러 XML(HTTP 200). 014=개별 문서 파일 없음(스킵),
+# 020=요청 한도 초과(전역 → 중단).
+_DOC_ERR_014 = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b"<result><status>014</status><message>file not found</message></result>"
+)
+_DOC_ERR_020 = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b"<result><status>020</status><message>rate limit</message></result>"
+)
+
 
 def _sample_doc_zip(text: str) -> bytes:
     xml = f"<document><body><p>{text}</p></body></document>".encode("utf-8")
@@ -109,31 +120,39 @@ def test_fetch_sends_key_and_parses(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "본문" in payloads[0]["body"]
 
 
-_DOC_NO_FILE = (
-    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    b"<result><status>014</status><message>file</message></result>"
-)
-
-
-def test_fetch_skips_filings_without_original_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    """document.xml이 ZIP 대신 XML 에러(status 014)면 그 공시만 건너뛰고 소스는 계속(BadZipFile 회귀)."""
+def test_fetch_skips_document_with_missing_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 014(파일 없음)는 그 문서만 스킵하고 나머지 공시는 계속 — 8번째 문서 014에 7건만
+    # 받고 죽던 회귀 방지.
     monkeypatch.setattr(settings, "opendart_api_key", "test-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("list.json"):
             return httpx.Response(200, content=_SAMPLE_LIST_BYTES)
-        # 첫 공시는 원본파일 없음(014), 둘째는 정상 ZIP
         if request.url.params.get("rcept_no") == "20240101000001":
-            return httpx.Response(200, content=_DOC_NO_FILE)
-        return httpx.Response(200, content=_sample_doc_zip("본문"))
+            return httpx.Response(200, content=_sample_doc_zip("본문"))
+        return httpx.Response(200, content=_DOC_ERR_014)  # 2번째 문서: 파일 없음
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         connector = OpenDartDocsConnector(throttle_s=0.0, client=client)
         payloads = list(connector.fetch())
 
-    assert len(payloads) == 1  # 014는 건너뛰고 ZIP 1건만
-    assert payloads[0]["meta"]["rcept_no"] == "20240101000002"
-    assert "본문" in payloads[0]["body"]
+    assert len(payloads) == 1
+    assert payloads[0]["meta"]["rcept_no"] == "20240101000001"
+
+
+def test_fetch_raises_on_global_document_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 020(한도 초과) 등 전역 에러는 re-raise해 소스 전체를 멈추고 원인을 표면화.
+    monkeypatch.setattr(settings, "opendart_api_key", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("list.json"):
+            return httpx.Response(200, content=_SAMPLE_LIST_BYTES)
+        return httpx.Response(200, content=_DOC_ERR_020)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        connector = OpenDartDocsConnector(throttle_s=0.0, client=client)
+        with pytest.raises(OpenDartDocsError):
+            list(connector.fetch())
 
 
 def test_fetch_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:

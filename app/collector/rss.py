@@ -9,6 +9,7 @@ parse_feed/normalize는 순수 함수(네트워크·DB 없이 테스트 가능),
 from __future__ import annotations
 
 import html
+import logging
 import re
 import ssl
 from collections.abc import Iterable
@@ -49,6 +50,8 @@ _USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _text(item: ET.Element, tag: str) -> str | None:
     el = item.find(tag)
@@ -83,22 +86,41 @@ def parse_feed(source: str, lang: str, xml_bytes: bytes) -> list[dict[str, Any]]
 
 
 class RssConnector(Connector):
-    def __init__(self, feeds: dict[str, dict[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        feeds: dict[str, dict[str, str]] | None = None,
+        *,
+        client: httpx.Client | None = None,
+    ) -> None:
         self.feeds = feeds if feeds is not None else DEFAULT_FEEDS
+        self._client = client
 
-    def fetch(self) -> Iterable[dict[str, Any]]:
+    def _make_client(self) -> httpx.Client:
         # OS 인증서 저장소 신뢰 (사내 TLS 가로채기 대응; uv --system-certs의 httpx판).
         ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        with httpx.Client(
-            timeout=20.0,
-            follow_redirects=True,
-            verify=ctx,
-            headers={"User-Agent": _USER_AGENT},
-        ) as client:
+        return httpx.Client(
+            timeout=20.0, follow_redirects=True, verify=ctx, headers={"User-Agent": _USER_AGENT}
+        )
+
+    def fetch(self) -> Iterable[dict[str, Any]]:
+        # 피드별 격리: 한 피드 실패(403·타임아웃·깨진 XML)가 나머지 피드 수집을 막지
+        # 않는다. 실패는 로깅하고 다음 피드로 넘어간다 — 매경(mk.co.kr) 한 곳 403이 RSS
+        # 전체를 죽이거나 뒤 순번(federalreserve/ecb/reuters)을 건너뛰게 하던 회귀를 막는다.
+        owns = self._client is None
+        http = self._client or self._make_client()
+        try:
             for source, meta in self.feeds.items():
-                resp = client.get(meta["url"])
-                resp.raise_for_status()
-                yield from parse_feed(source, meta["lang"], resp.content)
+                try:
+                    resp = http.get(meta["url"])
+                    resp.raise_for_status()
+                    items = parse_feed(source, meta["lang"], resp.content)
+                except (httpx.HTTPError, ET.ParseError) as exc:
+                    logger.warning("rss feed failed: %s: %s", source, exc)
+                    continue
+                yield from items
+        finally:
+            if owns:
+                http.close()
 
     def normalize(self, payload: dict[str, Any]) -> NormalizedDoc:
         pub_raw = payload.get("pubDate")

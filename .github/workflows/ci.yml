@@ -1,0 +1,51 @@
+name: CI
+
+# 머지/배포 게이트: 날짜 결합 회귀(time-bomb)·인코딩·nullable 드리프트가 머지 시점에
+# 잡히도록 push/PR 전부에서 pytest+ruff+mypy를 강제한다. 통합테스트는 FakeEmbedder라
+# embeddings extra(torch ~2GB) 불필요 — 코어 dev 그룹만 설치한다.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: ankane/pgvector
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: finance_agent_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # conftest 기본값(localhost:5433/finance_agent_test)과 일치 — 서비스 포트 매핑 5433:5432.
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5433/finance_agent_test
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5433/finance_agent_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies (dev group; embeddings extra 불필요 — FakeEmbedder)
+        run: uv sync
+
+      - name: pytest (실 Postgres+pgvector 통합 포함)
+        run: uv run pytest
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy .

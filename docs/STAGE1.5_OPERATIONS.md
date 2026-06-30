@@ -19,32 +19,34 @@
 인스턴스가 있으면 즉시 거절한다(중복 실행 방지). 온디맨드는 `POST /run-daily`로도 가능
 (409면 이미 실행 중).
 
+스케줄 산출물은 리포에 체크인돼 있다(`scripts/`) — 수동 명령을 옮겨 적지 말고 이걸 실행하라.
+로그 경로 `logs/`는 `.gitkeep`으로 보존되고 내용은 `.gitignore` 처리된다.
+
 ## Windows 작업 스케줄러
 
-프로젝트 디렉터리에서 매일 06:40 KST 실행(로컬 PC가 KST면 그대로):
-
 ```cmd
-schtasks /Create /TN "finance_agent_daily" /SC DAILY /ST 06:40 ^
-  /TR "cmd /c cd /d C:\Users\호두주인\Desktop\finance_agent && uv run python -m app.runner >> logs\daily.log 2>&1"
+scripts\schedule_daily.cmd
 ```
 
-- `/SC DAILY /ST 06:40` — 매일 06:40(작업 스케줄러는 OS 로컬 TZ를 쓴다; PC가 KST면 06:40 KST).
-- 로그는 `logs\daily.log`에 append(프로젝트 루트에 `logs` 폴더를 미리 만들 것).
-- 수동 1회 실행/검증: `schtasks /Run /TN "finance_agent_daily"`.
+- `scripts\schedule_daily.cmd` — `finance_agent_daily` 작업을 매일 06:40(OS 로컬 TZ; PC가
+  KST면 06:40 KST)에 등록한다. 경로는 스크립트 위치 기준으로 도출(하드코딩 없음). 작업은
+  잡 본체 `scripts\run_daily.cmd`(cd → `uv run python -m app.runner` → `logs\daily.log` append)를
+  호출한다 — schtasks `/TR`에 리다이렉션을 넣지 않아 따옴표 깨짐이 없다.
+- 수동 1회 실행/검증: `schtasks /Run /TN finance_agent_daily` (또는 `scripts\run_daily.cmd` 직접).
+- 등록 해제: `schtasks /Delete /TN finance_agent_daily /F`.
 - 특정 날짜 재실행: `uv run python -m app.runner --date 2026-06-22`.
+
+> 참고(스크립트 없이 한 줄로): `schtasks /Create /TN finance_agent_daily /SC DAILY /ST 06:40 /F /TR "cmd /c \"<repo>\scripts\run_daily.cmd\""`
 
 ## Linux/VM cron
 
-```cron
-# 서버가 KST(Asia/Seoul)일 때 — 06:40 KST:
-40 6 * * * cd /path/to/finance_agent && uv run python -m app.runner >> logs/daily.log 2>&1
-
-# 서버가 UTC일 때 — 06:40 KST = 전날 21:40 UTC (KST = UTC+9, DST 없음):
-40 21 * * * cd /path/to/finance_agent && uv run python -m app.runner >> logs/daily.log 2>&1
+```sh
+crontab scripts/crontab.example   # 또는: crontab -e 후 해당 줄 복사
 ```
 
-cron은 **서버 TZ**를 쓴다. brief_date는 항상 KST 기준일로 계산되므로(`_KST`), 잡 시각만
-서버 TZ에 맞춰 위 둘 중 하나를 고른다. 종료코드: 정상 0, 다른 일일 실행이 진행 중이면 비0.
+`scripts/crontab.example`에 두 줄(KST 서버용 / UTC 서버용)이 들어 있다. cron은 **서버 TZ**를
+쓰는데 brief_date는 항상 KST 기준일로 계산되므로(`_KST`), 서버 TZ에 맞는 줄 하나만 활성화한다
+(KST=UTC+9, DST 없음 → UTC 서버는 전날 21:40). 종료코드: 정상 0, 다른 일일 실행 진행 중이면 비0.
 
 ## 필요한 환경변수 (.env)
 

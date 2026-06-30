@@ -20,19 +20,40 @@ import httpx
 import truststore
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
 from app.collector.base import Connector, NormalizedDoc
 from app.config import settings
 from app.db import SessionLocal
-from app.models import RawDocument, Source
+from app.models import Coverage, RawDocument, SecurityAlias, Source
 
 _NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
 _LEGAL_BASIS = "Naver Search OpenAPI; 헤드라인+요약+링크만(P5)"
 _TAG = re.compile(r"<[^>]+>")
 
-# §4 Track A: KR 시장 키워드 기본 세트. 프로덕션은 coverage/security_aliases에서
-# 쿼리를 도출해야 한다(쿼리는 커버리지 종목/섹터 키워드+별칭).
-DEFAULT_QUERIES: list[str] = ["코스피", "반도체", "금리", "환율", "삼성전자"]
+
+def load_coverage_queries(session: Session) -> list[str]:
+    """coverage 섹터 + 커버 종목의 security_aliases 별칭을 네이버 검색 쿼리로 도출 (§2/§4 Track A).
+
+    빈 coverage/별칭 → 빈 리스트(네이버 no-op, 유니버스 하드코딩 금지). EDGAR `ciks=[]`와 대칭:
+    유니버스는 코드가 아니라 DB(coverage/security_aliases)에서 흐른다. 도출 규칙:
+    Coverage.sector(non-null distinct) ∪ SecurityAlias.alias where (ticker, market)가
+    어떤 Coverage(ticker, market)와 일치. 정렬·중복 제거.
+    """
+    sectors = session.execute(
+        select(Coverage.sector).where(Coverage.sector.is_not(None)).distinct()
+    ).scalars()
+    covered = set(
+        session.execute(
+            select(Coverage.ticker, Coverage.market).where(Coverage.ticker.is_not(None))
+        ).all()
+    )
+    aliases = session.execute(select(SecurityAlias.alias, SecurityAlias.ticker, SecurityAlias.market))
+    queries: set[str] = {s for s in sectors if s is not None}
+    for alias, ticker, market in aliases:
+        if (ticker, market) in covered:
+            queries.add(alias)
+    return sorted(queries)
 
 
 class NaverError(RuntimeError):

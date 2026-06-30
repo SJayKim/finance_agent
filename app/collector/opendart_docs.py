@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import ssl
 import time
@@ -46,10 +47,32 @@ _LEGAL_BASIS = "OpenDART 공시 본문 — 공개 법정공시(본문 grounding 
 _KST = timezone(timedelta(hours=9))
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
+_STATUS_RE = re.compile(r"<status>([^<]*)</status>")
+_MESSAGE_RE = re.compile(r"<message>([^<]*)</message>")
+# 014=파일이 존재하지 않습니다(개별 공시에 다운로드 문서 없음) → 그 문서만 스킵.
+# 그 외(010/011 키, 020 한도, 800 점검 등)는 전역 장애라 소스 전체를 멈춘다.
+_SKIPPABLE_DOC_STATUSES = {"014"}
+
+logger = logging.getLogger(__name__)
 
 
 class OpenDartDocsError(RuntimeError):
-    """OpenDART list.json이 에러 status(키 무효·한도 등)를 반환."""
+    """OpenDART API가 에러 status(키 무효·한도·파일없음 등)를 반환."""
+
+    def __init__(self, message: str, *, status: str | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def _parse_document_error(content: bytes) -> tuple[str | None, str]:
+    """document.xml이 ZIP 대신 준 에러 XML(<result><status>..</status><message>..)을 파싱."""
+    text = content.decode("utf-8", "replace")
+    status_m = _STATUS_RE.search(text)
+    message_m = _MESSAGE_RE.search(text)
+    return (
+        status_m.group(1) if status_m else None,
+        message_m.group(1).strip() if message_m else "",
+    )
 
 
 def _today_kst() -> str:
@@ -127,13 +150,8 @@ class OpenDartDocsConnector(Connector):
         ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         return httpx.Client(timeout=30.0, verify=ctx)
 
-    def _get_document_zip(self, http: httpx.Client, rcept_no: str) -> bytes | None:
-        """document.xml ZIP을 받는다. 429/타임아웃에 백오프 재시도(최대 2회).
-
-        원본파일이 없는 공시(자동생성·요약 공시 등)는 document.xml이 ZIP 대신
-        <status>014</status> 같은 XML 에러를 200으로 돌려준다 → None을 반환해 호출자가
-        건너뛰게 한다(소스 전체를 BadZipFile로 죽이지 않는다). ZIP은 항상 "PK"로 시작.
-        """
+    def _get_document_zip(self, http: httpx.Client, rcept_no: str) -> bytes:
+        """document.xml ZIP을 받는다. 429/타임아웃에 백오프 재시도(최대 2회)."""
         params = {"crtfc_key": settings.opendart_api_key, "rcept_no": rcept_no}
         for attempt in range(3):  # 최초 1회 + 재시도 2회
             try:
@@ -143,8 +161,14 @@ class OpenDartDocsConnector(Connector):
                         "429 Too Many Requests", request=resp.request, response=resp
                     )
                 resp.raise_for_status()
-                if not resp.content.startswith(b"PK"):
-                    return None  # 원본파일 없음(XML 에러) → 본문 grounding 불가, 건너뜀
+                # OpenDART는 에러를 HTTP 200 + XML(ZIP 아님)로 준다 → ZIP 매직(PK) 확인.
+                # 결정적 에러라 재시도 대상(Timeout/HTTPStatusError)과 분리해 즉시 raise.
+                if resp.content[:2] != b"PK":
+                    status, message = _parse_document_error(resp.content)
+                    raise OpenDartDocsError(
+                        f"document.xml status={status} message={message} rcept_no={rcept_no}",
+                        status=status,
+                    )
                 return resp.content
             except (httpx.TimeoutException, httpx.HTTPStatusError):
                 if attempt == 2:
@@ -173,9 +197,15 @@ class OpenDartDocsConnector(Connector):
             for i, meta in enumerate(filings):
                 if i > 0:
                     time.sleep(self.throttle_s)  # document 호출 사이 throttle(§5)
-                zip_bytes = self._get_document_zip(http, meta["rcept_no"])
-                if zip_bytes is None:
-                    continue  # 원본파일 없는 공시 — 본문 없음, 건너뜀
+                try:
+                    zip_bytes = self._get_document_zip(http, meta["rcept_no"])
+                except OpenDartDocsError as exc:
+                    # 개별 문서 문제(014=파일 없음)는 그 문서만 스킵하고 나머지 공시는 계속.
+                    # 전역 에러(키·한도·점검)는 re-raise해 소스 전체를 멈춘다(원인 표면화).
+                    if exc.status in _SKIPPABLE_DOC_STATUSES:
+                        logger.warning("opendart document skipped: %s: %s", meta["rcept_no"], exc)
+                        continue
+                    raise
                 body = extract_body_from_zip(zip_bytes)
                 yield {"meta": meta, "body": body}
         finally:

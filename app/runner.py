@@ -21,16 +21,18 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session
 
 from app.collector.base import Connector
 from app.collector.edgar_docs import EdgarDocsConnector
 from app.collector.finnhub import FinnhubConnector
 from app.collector.marketaux import MarketauxConnector
-from app.collector.naver import DEFAULT_QUERIES, NaverNewsConnector
+from app.collector.naver import NaverNewsConnector, load_coverage_queries
 from app.collector.opendart_docs import OpenDartDocsConnector
 from app.collector.rss import RssConnector
 from app.config import settings
@@ -40,6 +42,7 @@ from app.models import AuditLog, DailyDigest, RawDocument
 from app.pipeline.citations import ImpactAnalyzer
 from app.pipeline.digest import Digester, anthropic_digester, build_digest
 from app.pipeline.pipeline import run_pipeline
+from app.pipeline.seed import seed_universe
 
 # run_pipeline 내부 락(_PIPELINE_LOCK_KEY = 1_958_374_620)과 반드시 달라야 한다 — 같으면
 # run_daily가 잡은 락 때문에 그 안에서 부르는 run_pipeline이 PipelineAlreadyRunning으로 죽는다.
@@ -76,10 +79,15 @@ def build_default_connectors() -> list[tuple[str, Connector]]:
     EDGAR의 CIK 유니버스는 코드에 박지 않는다(§2: 유니버스는 DB/커버리지에서 흐른다).
     ciks=[]는 원칙적 placeholder — UA가 설정돼 있으면 빈 루프(no-op)이고, CIK 유니버스가
     DB/coverage에서 공급되기 전까지는 아무 문서도 가져오지 않는다. 무작위 CIK를 지어내지 않는다.
+
+    네이버 쿼리도 같은 원칙: coverage/security_aliases에서 도출한다(하드코딩 금지). 빈 DB →
+    빈 쿼리 → 네이버 no-op. 짧게 세션을 열어 읽는다(EDGAR ciks=[]와 대칭).
     """
+    with SessionLocal() as session:
+        naver_queries = load_coverage_queries(session)
     return [
         ("rss", RssConnector()),
-        ("naver", NaverNewsConnector(DEFAULT_QUERIES)),
+        ("naver", NaverNewsConnector(naver_queries)),
         ("opendart_docs", OpenDartDocsConnector()),
         ("edgar_docs", EdgarDocsConnector(ciks=[])),  # CIK 유니버스는 DB/커버리지에서(§2)
         ("marketaux", MarketauxConnector()),
@@ -175,13 +183,16 @@ def run_daily(
     embedder: Embedder | None = None,
     digester: Digester | None = None,
     analyzer: ImpactAnalyzer | None = None,
+    seeder: Callable[[Session], dict[str, int]] | None = None,
 ) -> DailyRunReport:
-    """일일 1회 실행: 모든 커넥터 수집 → run_pipeline → build_digest (§4 트랙 B).
+    """일일 1회 실행: 유니버스 시딩 → 모든 커넥터 수집 → run_pipeline → build_digest (§4 트랙 B).
 
     동시성 가드는 run_pipeline 내부 락과 다른 _DAILY_LOCK_KEY를 쓴다 — 안에서 부르는
     run_pipeline이 자기 락을 따로 잡으므로 둘이 충돌하면 안 된다. 락 미획득 시
-    DailyRunAlreadyRunning. embedder/analyzer/digester는 호출자가 실/가짜를 주입한다
-    (None이면 각 단계가 graceful 비활성: 임베딩 0, 분석 골격만, 다이제스트 degraded).
+    DailyRunAlreadyRunning. embedder/analyzer/digester/seeder는 호출자가 실/가짜를 주입한다
+    (None이면 각 단계가 graceful 비활성: 임베딩 0, 분석 골격만, 다이제스트 degraded, 시딩 skip).
+    seeder는 run_pipeline의 ticker_link보다 먼저(락 안 첫 단계) 돌아 별칭 사전을 채운다 — 비면
+    링크 0건. main()/엔드포인트가 실 seed_universe(외부 API 호출)를 주입하고, 테스트는 None/가짜.
     """
     logging.getLogger("httpx").setLevel(logging.WARNING)  # crtfc_key 노출 방지(CLAUDE.md)
     if connectors is None:
@@ -196,6 +207,12 @@ def run_daily(
         if not acquired:
             raise DailyRunAlreadyRunning(f"run_daily already running (lock {_DAILY_LOCK_KEY})")
         try:
+            if seeder is not None:
+                with SessionLocal() as session:
+                    seeded = seeder(session)
+                with SessionLocal() as session:
+                    session.add(AuditLog(actor="run_daily", action="seed", payload=seeded))
+                    session.commit()
             sources = _collect(connectors)
             # run_pipeline은 자기 세션·락·analyzer 자동생성을 관리한다(여기서 락을 안 잡음).
             run_pipeline(brief_date, analyzer=analyzer, embedder=embedder)
@@ -256,7 +273,9 @@ def main() -> int:
         )
 
     try:
-        report = run_daily(brief_date, embedder=get_embedder(), digester=digester)
+        report = run_daily(
+            brief_date, embedder=get_embedder(), digester=digester, seeder=seed_universe
+        )
     except DailyRunAlreadyRunning as exc:
         print(f"[run_daily] 거절: {exc}")
         return 1
