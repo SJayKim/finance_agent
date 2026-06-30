@@ -816,6 +816,35 @@ button:focus-visible {
 .board-card.g4 { border-left-color: #ff9f40; }
 .board-card.g5 { border-left-color: #56d364; }
 
+/* 근거 인라인 드로어: 클릭한 카드 행 바로 아래 풀폭으로 펼침(페이지 점프 대체). */
+.board-cards > .evidence-drawer { grid-column: 1 / -1; }
+
+.evidence-drawer {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.evidence-drawer .ed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  color: var(--text-3);
+}
+
+.evidence-drawer .ed-close {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: var(--fs-2);
+  cursor: pointer;
+  padding: 0 var(--sp-1);
+}
+
 .bc-top {
   display: flex;
   justify-content: space-between;

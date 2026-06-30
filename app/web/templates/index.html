@@ -83,22 +83,57 @@
   </main>
 
   <script>
-    // 임팩트 보드 행 선택 → 해당 근거 브리프 펼치고 이동·하이라이트 (좌→우 동기화의 경량 버전).
+    // 근거 선택 → 제자리 인라인 드로어로 펼침(페이지 점프 없음). 브리프 본문을 복제해 표시.
     (function () {
-      function openBrief(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        if (el.tagName === "DETAILS") el.open = true;
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("brief-flash");
-        setTimeout(function () { el.classList.remove("brief-flash"); }, 1200);
+      function closeDrawers() {
+        document.querySelectorAll(".evidence-drawer").forEach(function (d) { d.remove(); });
+      }
+      function toggleDrawer(anchor, briefId) {
+        var src = document.getElementById(briefId);
+        if (!src) return;
+        var next = anchor.nextElementSibling;
+        var isOpen = next && next.classList.contains("evidence-drawer")
+                     && next.getAttribute("data-for") === briefId;
+        closeDrawers();
+        if (isOpen) return; // 같은 근거 재클릭 → 토글 닫기
+        var body = src.querySelector(".brief-body");
+        if (!body) return;
+        var drawer = document.createElement("div");
+        drawer.className = "evidence-drawer";
+        drawer.setAttribute("data-for", briefId);
+        var head = document.createElement("div");
+        head.className = "ed-head";
+        head.innerHTML = "<span>근거 #" + briefId.replace("brief-", "") + "</span>";
+        var close = document.createElement("button");
+        close.type = "button";
+        close.className = "ed-close";
+        close.setAttribute("aria-label", "근거 닫기");
+        close.textContent = "✕";
+        close.addEventListener("click", function (e) { e.stopPropagation(); closeDrawers(); });
+        head.appendChild(close);
+        var content = document.createElement("div");
+        content.className = "ed-body";
+        content.innerHTML = body.innerHTML;
+        drawer.appendChild(head);
+        drawer.appendChild(content);
+        anchor.parentNode.insertBefore(drawer, anchor.nextSibling);
       }
       document.querySelectorAll(".board-card").forEach(function (row) {
         var id = row.getAttribute("data-brief");
-        row.addEventListener("click", function () { openBrief(id); });
+        row.addEventListener("click", function () { toggleDrawer(row, id); });
         row.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openBrief(id); }
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleDrawer(row, id); }
         });
+      });
+      document.querySelectorAll(".digest-sources a").forEach(function (link) {
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          var href = link.getAttribute("href") || "";
+          toggleDrawer(link.closest(".digest-card") || link, href.replace(/^#/, ""));
+        });
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeDrawers();
       });
     })();
   </script>
@@ -121,6 +156,7 @@
       }
       tabs.forEach(function (btn) {
         btn.addEventListener("click", function () {
+          document.querySelectorAll(".evidence-drawer").forEach(function (d) { d.remove(); });
           tabs.forEach(function (b) { b.classList.remove("active"); });
           btn.classList.add("active");
           apply(btn.getAttribute("data-asset"));
