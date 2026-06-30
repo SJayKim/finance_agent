@@ -950,28 +950,6 @@ button:focus-visible {
   font-weight: 400;
 }
 
-/* 보드 행 선택 시 대상 브리프 잠깐 강조 */
-@keyframes brief-flash {
-  from {
-    background: var(--accent-bg);
-  }
-  to {
-    background: transparent;
-  }
-}
-
-.brief-flash {
-  animation: brief-flash 1.2s ease;
-  border-left-color: var(--accent) !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .brief-flash {
-    animation: none;
-    background: var(--accent-bg);
-  }
-}
-
 /* ----------------------------------------------------------- 모바일 */
 @media (max-width: 480px) {
   main {
