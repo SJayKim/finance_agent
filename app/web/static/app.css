@@ -222,6 +222,15 @@ a {
   border-color: var(--accent);
 }
 
+.tab-count {
+  opacity: 0.65;
+}
+
+.board-empty {
+  font-size: var(--fs-1);
+  margin: var(--sp-3) 0 0;
+}
+
 #theme-toggle {
   flex: none;
   background: var(--surface);

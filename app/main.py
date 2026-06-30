@@ -18,6 +18,7 @@ from app.pipeline.seed import seed_universe
 from app.runner import DailyRunAlreadyRunning, run_daily
 from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
 from app.web.queries import (
+    board_asset_counts,
     dates_with_briefs,
     load_brief,
     load_digest,
@@ -155,6 +156,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
         {
             "briefs": briefs,
             "board": board,
+            "asset_counts": board_asset_counts(board),
             "digest": digest,
             "health": health,
             "brief_date": brief_date,

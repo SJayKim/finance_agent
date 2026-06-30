@@ -30,6 +30,7 @@ from app.web.queries import (
     BriefView,
     CitationView,
     TickerView,
+    board_asset_counts,
     dates_with_briefs,
     load_brief,
     rank_board,
@@ -162,6 +163,23 @@ def test_asset_classes_maps_market_to_class() -> None:
     assert stock.asset_classes == ["stock"]
     assert mixed.asset_classes == ["crypto", "stock"]
     assert none.asset_classes == []
+
+
+def test_board_asset_counts_per_class() -> None:
+    def _b(id: int, markets: list[str], score: int) -> BriefView:
+        return BriefView(
+            id=id, event_type="e", direction="긍정", confidence="MED", analysis_text="a",
+            status="ok", generated_at=_GEN, tickers=[_ticker(m) for m in markets],
+            citations=[], impact_score=score, cluster_id=id,
+        )
+
+    board = rank_board([
+        _b(1, ["CRYPTO"], 90),  # crypto only
+        _b(2, ["KR", "US"], 80),  # stock only
+        _b(3, ["CRYPTO", "KR"], 70),  # 양쪽 다 링크
+        _b(4, [], 60),  # 미링크 → all에만
+    ])
+    assert board_asset_counts(board) == {"all": 4, "stock": 2, "crypto": 2}
 
 
 # --------------------------------------------------------------------------- 단위: 채팅 파싱
@@ -352,6 +370,8 @@ def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
     assert "board-card" in body
     assert "date-chip" in body
     assert 'data-asset="crypto stock"' in body  # ok 브리프: BTC(crypto)+MSTR(us=stock)
+    assert "tab-count" in body  # U1: 탭 카운트 라벨
+    assert "board-empty" in body  # U1: 빈 상태 안내 요소
 
 
 def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:

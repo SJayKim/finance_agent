@@ -46,9 +46,9 @@
     {% include "_digest.html" %}
 
     <div class="asset-tabs">
-      <button type="button" data-asset="all" class="active">전체</button>
-      <button type="button" data-asset="stock">주식</button>
-      <button type="button" data-asset="crypto">암호화폐</button>
+      <button type="button" data-asset="all" class="active">전체 <span class="tab-count">{{ asset_counts.all }}</span></button>
+      <button type="button" data-asset="stock">주식 <span class="tab-count">{{ asset_counts.stock }}</span></button>
+      <button type="button" data-asset="crypto">암호화폐 <span class="tab-count">{{ asset_counts.crypto }}</span></button>
     </div>
 
     {% include "_impact_board.html" %}
@@ -108,12 +108,16 @@
     (function () {
       var tabs = document.querySelectorAll(".asset-tabs button");
       var targets = document.querySelectorAll(".board-card, .brief-item");
+      var emptyEl = document.querySelector(".board-empty");
       function apply(asset) {
+        var boardShown = 0;
         targets.forEach(function (el) {
           var classes = (el.getAttribute("data-asset") || "").split(" ").filter(Boolean);
           var show = asset === "all" || classes.indexOf(asset) !== -1;
           el.style.display = show ? "" : "none";
+          if (show && el.classList.contains("board-card")) boardShown++;
         });
+        if (emptyEl) emptyEl.hidden = asset === "all" || boardShown > 0;
       }
       tabs.forEach(function (btn) {
         btn.addEventListener("click", function () {
