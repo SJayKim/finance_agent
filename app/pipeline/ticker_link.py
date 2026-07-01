@@ -9,8 +9,10 @@
 경계:
 - 사전은 주입 인자다. KR/US/CRYPTO 종목 유니버스를 하드코딩하지 않는다(§2 규칙).
 - 정규화기(normalizer)도 주입. 라이브 OpenFIGI 어댑터는 openfigi_normalizer.
-- 매칭은 부분문자열 포함(소문자)이다. 경계·형태소(한국어 조사)·중의성 정밀화는
-  precision 게이트 튜닝 작업(§6.4)이라 골격에선 다루지 않고, 불확실은 is_candidate가 흡수.
+- 매칭은 왼쪽 경계 인식(소문자)이다: 별칭 왼쪽에 문자/숫자가 붙으면 더 긴 단어의 일부라
+  매치 안 함(§6.4 precision, '이닉스'가 '하이닉스' 안). 한국어 조사는 오른쪽에만 붙어 접미는
+  허용. 짧은(≤2자) 별칭은 경계를 통과해도 보통명사·패밀리 중의성 위험이 커 is_candidate=True로
+  강등(단정 금지). 잔여 불확실은 is_candidate가 흡수.
 """
 
 from __future__ import annotations
@@ -22,6 +24,26 @@ from app.pipeline.openfigi import normalize as _openfigi_normalize
 
 # market → OpenFIGI exchCode. KR=KOSPI(KS); KOSDAQ(KQ)·다중거래소는 §6.4 데이터 작업.
 _MARKET_EXCH = {"US": "US", "KR": "KS"}
+
+# 이 길이 이하 별칭은 경계를 통과해도 confident 단정 금지(§6.4). 2자로 잡은 근거:
+# 기존 계약이 3자 '테슬라'를 confident로 규정 → 임계는 ≤2. 3자 substring 오탐('이닉스')은
+# 길이가 아니라 왼쪽 경계 검사가 잡는다.
+_SHORT_ALIAS_LEN = 2
+
+
+def _alias_occurs(text_lower: str, alias_lower: str) -> bool:
+    """별칭이 왼쪽 경계에서 시작하는 출현이 하나라도 있으면 True.
+
+    왼쪽 경계 = 문자열 시작 또는 앞 글자가 문자/숫자가 아님(공백·문장부호 등). 한국어 조사는
+    오른쪽에만 붙으므로 왼쪽에 글자가 붙은 출현은 더 긴 단어의 일부다('이닉스'가 '하이닉스' 안).
+    오른쪽은 검사 안 함 — 조사·복합어 접미('테슬라가','삼성전자우')를 허용해야 하기 때문.
+    """
+    idx = text_lower.find(alias_lower)
+    while idx != -1:
+        if idx == 0 or not text_lower[idx - 1].isalnum():
+            return True
+        idx = text_lower.find(alias_lower, idx + 1)
+    return False
 
 
 @dataclass(frozen=True)
@@ -46,14 +68,16 @@ def resolve(
     links: list[TickerLink] = []
     seen: set[tuple[str, str]] = set()
     for alias, mappings in dictionary.items():
-        if alias.lower() not in lowered:
+        if not _alias_occurs(lowered, alias.lower()):
             continue
+        # 짧은 별칭은 경계를 통과해도 보통명사·패밀리 중의성 위험이 커 단정 금지(§6.4).
+        short = len(alias) <= _SHORT_ALIAS_LEN
         ambiguous = len(mappings) > 1
         for ticker, market in mappings:
             if (ticker, market) in seen:
                 continue
             seen.add((ticker, market))
-            is_candidate = ambiguous
+            is_candidate = ambiguous or short
             resolved = ticker
             if normalizer is not None and market in ("KR", "US"):
                 std = normalizer(ticker, market)
