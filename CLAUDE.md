@@ -129,3 +129,22 @@ error is a free lesson — capture it before it escapes.
   취급. 추천 근거(어떤 뉴스·이벤트에서 도출됐는지)를 항상 함께 남길 것.
 - 크롤링 소스의 신뢰도·시점(발행 시각)을 분석에 반영. 오래된 뉴스로
   현재 시황을 판단하지 말 것.
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
+- Author a backlog-ready spec/issue → invoke /spec
