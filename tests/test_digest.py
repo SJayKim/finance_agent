@@ -169,6 +169,21 @@ def test_digester_returns_none_on_api_error() -> None:
     assert anthropic_digester(client, "m")([_input(1, ["x"])]) is None
 
 
+def test_digester_returns_none_on_truncated_json() -> None:
+    """패스2 구조화 JSON이 max_tokens로 잘려 오면 크래시 대신 None(→degraded).
+
+    회귀: 잘린 JSON의 json.JSONDecodeError(APIError 아님)가 안 잡혀 build_digest→daily_run
+    전체가 죽던 버그(2026-06-26 오늘 수집 실행 중단).
+    """
+    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
+    # 닫히지 않은 문자열 — json.loads가 JSONDecodeError를 던진다(잘린 응답 모사).
+    pass2 = SimpleNamespace(
+        content=[_text_block('{"sections": [{"section": "macro", "heading": "금리 인')]
+    )
+    client, _ = _fake_client([pass1, pass2])
+    assert anthropic_digester(client, "m")([_input(1, ["a"])]) is None
+
+
 # ----------------------------------------------------------------------------
 # DB 테스트 (db 픽스처; 오케스트레이터가 직렬 실행)
 # ----------------------------------------------------------------------------
@@ -281,6 +296,45 @@ def test_build_digest_is_idempotent(db: sessionmaker) -> None:
         sources = s.execute(select(func.count()).select_from(DigestSource)).scalar_one()
     assert digests == 1  # uq_daily_digests_date_section 유지, 중복 없음
     assert sources == 2
+
+
+def test_build_digest_merges_duplicate_section_keys(db: sessionmaker) -> None:
+    """디제스터가 같은 section 키를 여러 번 내도 uq_daily_digests_date_section 위반 없이 1행으로 병합.
+
+    회귀: LLM 패스2가 'macro'를 두 섹션으로 쪼개 반환 → 중복 키 INSERT가 UniqueViolation으로
+    daily_run을 죽이던 버그(2026-06-26).
+    """
+    ids = _seed_ok_items(db, count=2)
+
+    def dup_digester(inputs: Sequence[DigestInput]) -> list[DigestSection]:
+        cites = [c for inp in inputs for c in inp.citations]
+        sids = [inp.brief_item_id for inp in inputs]
+        return [
+            DigestSection(
+                section="macro",
+                heading="A",
+                body_text="첫째",
+                citations=cites,
+                source_brief_item_ids=sids,
+            ),
+            DigestSection(
+                section="macro",
+                heading="B",
+                body_text="둘째",
+                citations=cites,
+                source_brief_item_ids=sids,
+            ),
+        ]
+
+    with db() as s:
+        build_digest(s, _BRIEF_DATE, digester=cast(Any, dup_digester))
+        s.commit()
+    with db() as s:
+        rows = s.execute(select(DailyDigest).where(DailyDigest.section == "macro")).scalars().all()
+        assert len(rows) == 1  # 두 'macro' 섹션이 1행으로 병합
+        assert "첫째" in rows[0].body_text and "둘째" in rows[0].body_text
+        sources = s.execute(select(DigestSource)).scalars().all()
+        assert {src.brief_item_id for src in sources} == set(ids)  # 근거 중복 없이 합집합
 
 
 def test_build_digest_degraded_when_no_digester(db: sessionmaker) -> None:

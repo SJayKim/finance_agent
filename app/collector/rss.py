@@ -36,17 +36,19 @@ DEFAULT_FEEDS: dict[str, dict[str, str]] = {
     # KR 경제지 (ko): 한국경제·매일경제 퍼블릭 RSS
     "hankyung": {"url": "https://www.hankyung.com/feed/economy", "lang": "ko"},
     "maeil": {"url": "https://www.mk.co.kr/rss/30100041/", "lang": "ko"},  # 매경 경제
-    # 글로벌 매크로 (en): 연준·ECB·로이터
+    # 글로벌 매크로 (en): 연준·ECB
     "federalreserve": {"url": "https://www.federalreserve.gov/feeds/press_all.xml", "lang": "en"},
     "ecb": {"url": "https://www.ecb.europa.eu/rss/press.html", "lang": "en"},
-    # 로이터 퍼블릭 RSS는 불안정 — 동작 안 하면 조정 필요.
-    "reuters": {"url": "https://feeds.reuters.com/reuters/businessNews", "lang": "en"},
+    # 로이터 퍼블릭 RSS(feeds.reuters.com)는 폐지됨(ConnectError) → 제거(2026-06-26).
 }
 
 _TAG = re.compile(r"<[^>]+>")
 _LEGAL_BASIS = "publisher RSS syndication; headline+summary+link only (P5)"
-# 일부 퍼블리셔(매경 등)는 비-브라우저 UA를 403으로 막는다 → 브라우저 UA 명시.
-_USER_AGENT = "Mozilla/5.0 (compatible; finance-agent/1.0; +RSS reader)"
+# 일부 퍼블리셔(예: mk.co.kr)는 기본 httpx UA에 403을 준다 — 브라우저 UA로 식별해 통과.
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 logger = logging.getLogger(__name__)
 

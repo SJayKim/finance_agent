@@ -206,6 +206,19 @@ def rank_board(briefs: Sequence[BriefView]) -> list[BoardRow]:
     return rows
 
 
+def board_asset_counts(board: Sequence[BoardRow]) -> dict[str, int]:
+    """탭 버튼 라벨용 자산별 보드 행 수. all=전체, stock/crypto=해당 자산이 링크된 행 수.
+
+    한 행이 두 자산을 모두 링크하면 양쪽에 카운트(탭 양쪽에 노출되므로 일치). 티커
+    없는 행은 all에만 포함 — 자산 탭에서 숨겨지는 현 동작과 카운트를 맞춘다.
+    """
+    counts = {"all": len(board), "stock": 0, "crypto": 0}
+    for row in board:
+        for cls in row.asset_classes:
+            counts[cls] += 1
+    return counts
+
+
 def search_citation_spans(
     session: Session, query_vec: Sequence[float], top_k: int = 8
 ) -> list[CitationView]:

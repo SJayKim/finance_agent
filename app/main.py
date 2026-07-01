@@ -18,6 +18,7 @@ from app.pipeline.seed import seed_universe
 from app.runner import DailyRunAlreadyRunning, run_daily
 from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
 from app.web.queries import (
+    board_asset_counts,
     dates_with_briefs,
     load_brief,
     load_digest,
@@ -41,6 +42,11 @@ def _parse_date(value: str | None) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid date (expected YYYY-MM-DD)") from exc
+
+
+def _default_date(has_data: set[date], today: date) -> date:
+    """대시보드 기본 날짜: 데이터 있는 최신일, 없으면 오늘. 오늘 데이터가 있으면 오늘(=최신)."""
+    return max(has_data) if has_data else today
 
 
 def _chat_analyzer() -> ChatAnalyzer | None:
@@ -126,15 +132,15 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
     페이지 렌더에 로드되면 안 됨, §4). 누적 토글은 채팅이 켜지면 노출되고, 임베더가 없으면
     누적 선택 시 첫 질의에서 graceful하게 '채팅 비활성'으로 떨어진다.
     """
-    brief_date = _parse_date(date)
+    today = datetime.now(_KST).date()
     with SessionLocal() as session:
+        has_data = dates_with_briefs(session)
+        brief_date = _parse_date(date) if date else _default_date(has_data, today)
         briefs = load_brief(session, brief_date)
         digest = load_digest(session, brief_date)
         health = load_source_health(session, brief_date)
-        has_data = dates_with_briefs(session)
     last_updated = max((b.last_updated for b in briefs), default=None)
     board = rank_board(briefs)
-    today = datetime.now(_KST).date()
     date_chips = [
         {
             "iso": d.isoformat(),
@@ -150,6 +156,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
         {
             "briefs": briefs,
             "board": board,
+            "asset_counts": board_asset_counts(board),
             "digest": digest,
             "health": health,
             "brief_date": brief_date,

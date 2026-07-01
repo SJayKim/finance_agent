@@ -30,6 +30,7 @@ from app.web.queries import (
     BriefView,
     CitationView,
     TickerView,
+    board_asset_counts,
     dates_with_briefs,
     load_brief,
     rank_board,
@@ -162,6 +163,23 @@ def test_asset_classes_maps_market_to_class() -> None:
     assert stock.asset_classes == ["stock"]
     assert mixed.asset_classes == ["crypto", "stock"]
     assert none.asset_classes == []
+
+
+def test_board_asset_counts_per_class() -> None:
+    def _b(id: int, markets: list[str], score: int) -> BriefView:
+        return BriefView(
+            id=id, event_type="e", direction="긍정", confidence="MED", analysis_text="a",
+            status="ok", generated_at=_GEN, tickers=[_ticker(m) for m in markets],
+            citations=[], impact_score=score, cluster_id=id,
+        )
+
+    board = rank_board([
+        _b(1, ["CRYPTO"], 90),  # crypto only
+        _b(2, ["KR", "US"], 80),  # stock only
+        _b(3, ["CRYPTO", "KR"], 70),  # 양쪽 다 링크
+        _b(4, [], 60),  # 미링크 → all에만
+    ])
+    assert board_asset_counts(board) == {"all": 4, "stock": 2, "crypto": 2}
 
 
 # --------------------------------------------------------------------------- 단위: 채팅 파싱
@@ -352,12 +370,24 @@ def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
     assert "board-card" in body
     assert "date-chip" in body
     assert 'data-asset="crypto stock"' in body  # ok 브리프: BTC(crypto)+MSTR(us=stock)
+    assert "tab-count" in body  # U1: 탭 카운트 라벨
+    assert "board-empty" in body  # U1: 빈 상태 안내 요소
 
 
 def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:
     resp = client.get("/?date=2099-01-01")
     assert resp.status_code == 200
     assert "브리프 없음" in resp.text
+
+
+def test_dashboard_default_date_falls_back_to_latest_data(db: sessionmaker) -> None:
+    """?date 미지정 + 오늘 데이터 없음 → 데이터 있는 최신일로 폴백(빈 보드 방지). P4 회귀."""
+    _seed_brief(db)  # 과거 _BRIEF_DATE에만 시드, 오늘(KST)엔 데이터 없음
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "브리프 없음" not in body  # 오늘(빈 보드)이 아니라 최신 데이터일로 떨어져야
+    assert "price_move" in body  # _BRIEF_DATE에 시드된 브리프가 렌더됨
 
 
 def test_dashboard_rejects_bad_date(db: sessionmaker) -> None:
