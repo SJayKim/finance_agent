@@ -85,6 +85,15 @@ def test_short_common_word_alias_demoted() -> None:
     ]
 
 
+def test_ambiguous_common_word_alias_demoted() -> None:
+    # '오로라'는 상장사(039830)지만 일상어(aurora)이기도 해 경계·길이론 못 걸러진다.
+    # 큐레이션 데니리스트로 단정 금지(§6.4 후보) — 여행 기사에 붙어도 confident 아님.
+    dictionary = {"오로라": [("039830", "KR")]}
+    assert resolve("구채구·오로라·남미 완전일주 여행 상품", dictionary) == [
+        TickerLink(ticker="039830", market="KR", is_candidate=True)
+    ]
+
+
 def test_standalone_korean_alias_stays_confident() -> None:
     # 경계(공백)에서 시작하는 3자+ 별칭은 조사가 붙어도 confident 유지(과잉강등 방지).
     dictionary = {"삼성전자": [("005930", "KR")]}
