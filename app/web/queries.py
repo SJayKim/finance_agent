@@ -89,6 +89,9 @@ def load_brief(session: Session, brief_date: date) -> list[BriefView]:
 
     brief 0건이면 빈 리스트. 인용은 raw_documents에 outer join — 원문이 사라져도
     인용 텍스트는 남으므로 url/title이 None일 수 있다(템플릿이 '원문 링크 없음' 처리).
+    같은 (raw_document_id, cited_text) 중복 인용은 한 번만 담는다 — LLM이 같은 인용을
+    여러 번 출력해 적재된 행(실측 citations의 41%)이 브리프·드로어에 3~4회 반복 표시되는
+    것을 렌더에서 차단(search_citation_spans의 중복 제거와 같은 패턴).
     """
     items = (
         session.execute(
@@ -113,12 +116,17 @@ def load_brief(session: Session, brief_date: date) -> list[BriefView]:
         )
 
     citations_by_item: dict[int, list[CitationView]] = defaultdict(list)
+    seen: set[tuple[int, int, str]] = set()
     for cit, url, title in session.execute(
         select(Citation, RawDocument.url, RawDocument.title)
         .outerjoin(RawDocument, RawDocument.id == Citation.raw_document_id)
         .where(Citation.brief_item_id.in_(ids))
         .order_by(Citation.id)
     ):
+        key = (cit.brief_item_id, cit.raw_document_id, cit.cited_text)
+        if key in seen:
+            continue
+        seen.add(key)
         citations_by_item[cit.brief_item_id].append(
             CitationView(
                 cited_text=cit.cited_text,
