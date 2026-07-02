@@ -1,5 +1,6 @@
 """/qa 발견 이슈 회귀 테스트 (Report: .gstack/qa-reports/qa-report-localhost-8000-2026-07-02.md).
 
+단위(네트워크·DB 없이): analysis_html 마크다운 렌더·XSS 이스케이프.
 통합(실 Postgres): load_brief 인용 중복 제거. 픽스처·시드 관례는 test_web.py를 따른다.
 """
 
@@ -11,10 +12,40 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import BriefItem, Citation, Cluster, RawDocument, Source
 from app.web.queries import load_brief
+from app.web.render import analysis_html
 
 _BRIEF_DATE = date(2026, 6, 21)
 _PUB = datetime(2026, 6, 21, 9, tzinfo=timezone.utc)
 _GEN = datetime(2026, 6, 21, 12, tzinfo=timezone.utc)
+
+
+# ------------------------------------------------------------- 단위: analysis_html
+
+
+def test_analysis_html_renders_markdown_structure() -> None:
+    # Regression: ISSUE-001 — LLM 분석 본문의 #·##·**·리스트가 raw 마크다운
+    # 텍스트로 브리프·드로어에 그대로 노출됨.
+    # Found by /qa on 2026-07-02
+    # Report: .gstack/qa-reports/qa-report-localhost-8000-2026-07-02.md
+    html = str(analysis_html("## 핵심 이벤트\n\n**삼성전자** 급등\n\n- 항목 하나\n- 항목 둘"))
+    assert "<h2>핵심 이벤트</h2>" in html
+    assert "<strong>삼성전자</strong>" in html
+    assert "<li>항목 하나</li>" in html
+    assert "##" not in html and "**" not in html
+
+
+def test_analysis_html_keeps_paragraph_glued_list_lines() -> None:
+    # ISSUE-001 부속: LLM이 빈 줄 없이 문단에 붙여 쓰는 리스트는 python-markdown이
+    # 리스트로 안 봄 — nl2br로 줄 단위 표시(이전 pre-wrap 가독성)를 보장한다.
+    html = str(analysis_html("**제목**\n- 하나\n- 둘"))
+    assert "<br />" in html
+
+
+def test_analysis_html_escapes_llm_raw_html() -> None:
+    # ISSUE-001 부속: LLM 출력에 원시 HTML이 섞여도 태그가 살아남으면 안 된다(XSS).
+    html = str(analysis_html('본문 <script>alert("x")</script> 끝'))
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
 
 
 def _seed_brief_with_duplicate_citations(db: sessionmaker) -> None:
