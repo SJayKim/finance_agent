@@ -14,7 +14,7 @@
       {% if b.status == "degraded" %}
         <p class="degraded-note">분석 일시 불가 — 일부 소스가 빠졌습니다.</p>
       {% endif %}
-      {% if b.analysis_text %}<p class="analysis">{{ b.analysis_text }}</p>{% endif %}
+      {% if b.analysis_text %}<div class="analysis">{{ b.analysis_text | md }}</div>{% endif %}
 
       {% if b.tickers %}
       <ul class="tickers">

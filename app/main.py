@@ -25,12 +25,14 @@ from app.web.queries import (
     load_source_health,
     rank_board,
 )
+from app.web.render import analysis_html
 
 BASE_DIR = Path(__file__).resolve().parent
 _KST = timezone(timedelta(hours=9))  # 07:00 KST 크론과 같은 기준일(§3) — KST는 DST 없음
 
 app = FastAPI(title="finance-agent — 증거 브리프")
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
+templates.env.filters["md"] = analysis_html
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
 
 

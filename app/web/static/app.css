@@ -497,8 +497,35 @@ a {
 }
 
 .analysis {
-  white-space: pre-wrap;
   color: var(--text-1);
+}
+
+/* 마크다운 렌더된 분석 본문 — 카드 안이므로 제목은 section-title(--fs-5)보다 작게 */
+.analysis h1,
+.analysis h2 {
+  font-size: var(--fs-4);
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+
+.analysis h3 {
+  font-size: var(--fs-3);
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+
+.analysis h1:first-child,
+.analysis h2:first-child,
+.analysis h3:first-child {
+  margin-top: 0;
+}
+
+.analysis p {
+  margin: var(--sp-2) 0;
+}
+
+.analysis ul,
+.analysis ol {
+  margin: var(--sp-2) 0;
+  padding-left: var(--sp-5);
 }
 
 .degraded-note {

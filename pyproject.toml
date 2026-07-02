@@ -16,6 +16,7 @@ dependencies = [
     "httpx",
     "anthropic",
     "truststore>=0.10.4",
+    "markdown>=3.10.2",
 ]
 
 # 임베딩(bge-m3 등)은 opt-in: uv sync --extra embeddings (코어 uv sync는 가볍게 유지).
