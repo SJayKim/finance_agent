@@ -22,6 +22,7 @@ from app.main import app
 from app.models import BriefItem, Citation, RawDocument, Source
 from app.web.chat import ChatAnswer, ChatCitation, anthropic_rag_chat
 from app.web.queries import search_citation_spans
+from tests.conftest import DASHBOARD_AUTH
 
 client = TestClient(app)
 
@@ -184,7 +185,11 @@ def test_chat_cumulative_scope_uses_rag(monkeypatch: pytest.MonkeyPatch) -> None
         )
 
     monkeypatch.setattr("app.main._rag_analyzer", lambda: fake_rag)
-    resp = client.post("/chat", data={"q": "전체에서 무슨 일?", "scope": "cumulative"})
+    resp = client.post(
+        "/chat",
+        data={"q": "전체에서 무슨 일?", "scope": "cumulative"},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "누적 코퍼스 답변." in resp.text
     assert 'href="http://x"' in resp.text
@@ -192,7 +197,11 @@ def test_chat_cumulative_scope_uses_rag(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_chat_cumulative_disabled_when_no_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.main._rag_analyzer", lambda: None)
-    resp = client.post("/chat", data={"q": "질문", "scope": "cumulative"})
+    resp = client.post(
+        "/chat",
+        data={"q": "질문", "scope": "cumulative"},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "채팅 비활성" in resp.text
 
@@ -204,6 +213,10 @@ def test_chat_cumulative_empty_input_refuses_without_calling_analyzer(
         raise AssertionError("빈 입력은 analyzer를 호출하면 안 된다")
 
     monkeypatch.setattr("app.main._rag_analyzer", lambda: boom)
-    resp = client.post("/chat", data={"q": "   ", "scope": "cumulative"})
+    resp = client.post(
+        "/chat",
+        data={"q": "   ", "scope": "cumulative"},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "관련 근거 없음" in resp.text

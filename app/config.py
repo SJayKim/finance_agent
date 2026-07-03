@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     impact_model: str = "claude-opus-4-8"
 
+    # Dashboard Basic Auth. Protected routes fail closed unless both values are set.
+    dashboard_username: str | None = None
+    dashboard_password: str | None = None
+
     # 소스 API 키 (제공 전엔 빈 값. 커넥터는 키 없으면 비활성)
     naver_client_id: str | None = None
     naver_client_secret: str | None = None

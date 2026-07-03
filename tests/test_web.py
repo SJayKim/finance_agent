@@ -35,6 +35,7 @@ from app.web.queries import (
     load_brief,
     rank_board,
 )
+from tests.conftest import DASHBOARD_AUTH
 
 client = TestClient(app)
 
@@ -347,7 +348,7 @@ def test_load_brief_empty_when_no_briefs(db: sessionmaker) -> None:
 
 def test_dashboard_renders_briefs_and_citation_links(db: sessionmaker) -> None:
     _seed_brief(db)
-    resp = client.get(f"/?date={_BRIEF_DATE.isoformat()}")
+    resp = client.get(f"/?date={_BRIEF_DATE.isoformat()}", auth=DASHBOARD_AUTH)
     assert resp.status_code == 200
     body = resp.text
     assert "price_move" in body and "긍정" in body and "MED" in body
@@ -365,7 +366,7 @@ def test_dates_with_briefs_includes_seeded_dates(db: sessionmaker) -> None:
 
 def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
     _seed_brief(db)
-    body = client.get(f"/?date={_BRIEF_DATE.isoformat()}").text
+    body = client.get(f"/?date={_BRIEF_DATE.isoformat()}", auth=DASHBOARD_AUTH).text
     assert "asset-tabs" in body
     assert "board-card" in body
     assert "date-chip" in body
@@ -375,7 +376,7 @@ def test_dashboard_renders_asset_and_date_chip_markup(db: sessionmaker) -> None:
 
 
 def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:
-    resp = client.get("/?date=2099-01-01")
+    resp = client.get("/?date=2099-01-01", auth=DASHBOARD_AUTH)
     assert resp.status_code == 200
     assert "브리프 없음" in resp.text
 
@@ -383,7 +384,7 @@ def test_dashboard_empty_date_shows_no_brief(db: sessionmaker) -> None:
 def test_dashboard_default_date_falls_back_to_latest_data(db: sessionmaker) -> None:
     """?date 미지정 + 오늘 데이터 없음 → 데이터 있는 최신일로 폴백(빈 보드 방지). P4 회귀."""
     _seed_brief(db)  # 과거 _BRIEF_DATE에만 시드, 오늘(KST)엔 데이터 없음
-    resp = client.get("/")
+    resp = client.get("/", auth=DASHBOARD_AUTH)
     assert resp.status_code == 200
     body = resp.text
     assert "브리프 없음" not in body  # 오늘(빈 보드)이 아니라 최신 데이터일로 떨어져야
@@ -391,7 +392,7 @@ def test_dashboard_default_date_falls_back_to_latest_data(db: sessionmaker) -> N
 
 
 def test_dashboard_rejects_bad_date(db: sessionmaker) -> None:
-    assert client.get("/?date=not-a-date").status_code == 400
+    assert client.get("/?date=not-a-date", auth=DASHBOARD_AUTH).status_code == 400
 
 
 def test_chat_grounded(db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -406,7 +407,11 @@ def test_chat_grounded(db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> Non
         )
 
     monkeypatch.setattr("app.main._chat_analyzer", lambda: fake_analyzer)
-    resp = client.post("/chat", data={"q": "비트코인 무슨 일?", "date": _BRIEF_DATE.isoformat()})
+    resp = client.post(
+        "/chat",
+        data={"q": "비트코인 무슨 일?", "date": _BRIEF_DATE.isoformat()},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "BTC가 10만 달러를 넘었습니다." in resp.text
     assert 'href="http://news/btc"' in resp.text
@@ -415,7 +420,11 @@ def test_chat_grounded(db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> Non
 def test_chat_refusal(db: sessionmaker, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_brief(db)
     monkeypatch.setattr("app.main._chat_analyzer", lambda: lambda q, b: None)
-    resp = client.post("/chat", data={"q": "헛소리", "date": _BRIEF_DATE.isoformat()})
+    resp = client.post(
+        "/chat",
+        data={"q": "헛소리", "date": _BRIEF_DATE.isoformat()},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "관련 근거 없음" in resp.text
 
@@ -425,13 +434,21 @@ def test_chat_empty_input_refuses_without_calling_analyzer(monkeypatch: pytest.M
         raise AssertionError("빈 입력은 analyzer를 호출하면 안 된다")
 
     monkeypatch.setattr("app.main._chat_analyzer", lambda: boom)
-    resp = client.post("/chat", data={"q": "   ", "date": _BRIEF_DATE.isoformat()})
+    resp = client.post(
+        "/chat",
+        data={"q": "   ", "date": _BRIEF_DATE.isoformat()},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "관련 근거 없음" in resp.text
 
 
 def test_chat_disabled_when_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.main._chat_analyzer", lambda: None)
-    resp = client.post("/chat", data={"q": "질문", "date": _BRIEF_DATE.isoformat()})
+    resp = client.post(
+        "/chat",
+        data={"q": "질문", "date": _BRIEF_DATE.isoformat()},
+        auth=DASHBOARD_AUTH,
+    )
     assert resp.status_code == 200
     assert "채팅 비활성" in resp.text

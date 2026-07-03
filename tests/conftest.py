@@ -21,6 +21,9 @@ _TEST_DATABASE_URL = os.environ.get(
     "postgresql+psycopg://postgres:postgres@localhost:5433/finance_agent_test",
 )
 os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+os.environ.setdefault("DASHBOARD_USERNAME", "test-dashboard")
+os.environ.setdefault("DASHBOARD_PASSWORD", "test-password")
+DASHBOARD_AUTH = (os.environ["DASHBOARD_USERNAME"], os.environ["DASHBOARD_PASSWORD"])
 
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402

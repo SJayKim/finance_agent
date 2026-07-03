@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from app.main import app
 from app.models import AuditLog, BriefItem, DailyDigest, DigestSource
 from app.web.queries import load_digest, load_source_health
+from tests.conftest import DASHBOARD_AUTH
 
 client = TestClient(app)
 
@@ -156,7 +157,7 @@ def test_dashboard_renders_digest_cards_and_source_health(db: sessionmaker) -> N
         s.commit()
         brief_id = brief.id
 
-    resp = client.get(f"/?date={_BRIEF_DATE.isoformat()}")
+    resp = client.get(f"/?date={_BRIEF_DATE.isoformat()}", auth=DASHBOARD_AUTH)
     assert resp.status_code == 200
     body = resp.text
     assert "일일 다이제스트" in body
@@ -169,7 +170,7 @@ def test_dashboard_renders_digest_cards_and_source_health(db: sessionmaker) -> N
 
 def test_dashboard_chat_form_has_scope_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.main.settings.anthropic_api_key", "test-key")
-    resp = client.get("/?date=2099-01-01")
+    resp = client.get("/?date=2099-01-01", auth=DASHBOARD_AUTH)
     assert resp.status_code == 200
     body = resp.text
     assert 'value="date"' in body

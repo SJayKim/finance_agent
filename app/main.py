@@ -1,10 +1,13 @@
 """FastAPI 골격: health + 온디맨드 트리거 + 증거 브리프 대시보드 (STAGE1_DESIGN §3, §4)."""
 
+import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -34,6 +37,34 @@ app = FastAPI(title="finance-agent — 증거 브리프")
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 templates.env.filters["md"] = analysis_html
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
+_basic_auth = HTTPBasic(auto_error=False)
+
+
+def _auth_401(detail: str = "Not authenticated") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Basic"},
+    )
+
+
+def _require_dashboard_auth(
+    credentials: Annotated[HTTPBasicCredentials | None, Depends(_basic_auth)],
+) -> str:
+    username = settings.dashboard_username
+    password = settings.dashboard_password
+    if credentials is None or not username or not password:
+        raise _auth_401()
+
+    username_ok = secrets.compare_digest(
+        credentials.username.encode("utf-8"), username.encode("utf-8")
+    )
+    password_ok = secrets.compare_digest(
+        credentials.password.encode("utf-8"), password.encode("utf-8")
+    )
+    if not (username_ok and password_ok):
+        raise _auth_401("Invalid authentication credentials")
+    return credentials.username
 
 
 def _parse_date(value: str | None) -> date:
@@ -79,7 +110,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/trigger")
+@app.post("/trigger", dependencies=[Depends(_require_dashboard_auth)])
 def trigger() -> dict[str, str]:
     """온디맨드 파이프라인 트리거 (§3·§4): 오늘(KST) brief_date로 run_pipeline 1회 동기 실행.
 
@@ -94,7 +125,7 @@ def trigger() -> dict[str, str]:
     return {"status": "ok", "brief_date": brief_date.isoformat()}
 
 
-@app.post("/run-daily")
+@app.post("/run-daily", dependencies=[Depends(_require_dashboard_auth)])
 def run_daily_endpoint() -> dict[str, object]:
     """온디맨드 전체 일일 실행 (§4 트랙 B): 수집(모든 커넥터) → 파이프라인 → 다이제스트.
 
@@ -126,7 +157,7 @@ def run_daily_endpoint() -> dict[str, object]:
     }
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(_require_dashboard_auth)])
 def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
     """추적성 뷰 + 일일 다이제스트 + 소스 헬스 (§4 트랙 E / §8.6).
 
@@ -172,7 +203,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
     )
 
 
-@app.post("/chat", response_class=HTMLResponse)
+@app.post("/chat", response_class=HTMLResponse, dependencies=[Depends(_require_dashboard_auth)])
 def chat(
     request: Request,
     q: str = Form(""),
