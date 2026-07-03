@@ -22,6 +22,7 @@
 - **Auto deploy path도 준비됐다.**
   - `.github/workflows/deploy-dashboard.yml`를 추가했다.
   - GitHub secret `FLY_API_TOKEN`을 등록했다.
+  - GitHub Actions runtime에서는 flyctl 호환성을 위해 같은 secret을 `FLY_API_TOKEN`과 `FLY_ACCESS_TOKEN` 둘 다로 전달한다.
 - daily scheduler는 그대로 GitHub Actions에 둔다. Fly는 dashboard runtime만 담당한다.
 
 ## Current State
@@ -98,7 +99,7 @@ Completed on 2026-07-03 KST:
 - Supabase `DATABASE_URL` was URL-encoded correctly and deployed as a Fly secret.
 - Manual Fly deploy succeeded.
 - Auto deploy workflow was added after manual deploy success.
-- GitHub secret `FLY_API_TOKEN` was created from a Fly app-scoped deploy token.
+- GitHub secret `FLY_API_TOKEN` was created from a Fly app-scoped deploy token and passed to flyctl as both `FLY_API_TOKEN` and `FLY_ACCESS_TOKEN`.
 - `daily.yml` timeout was raised from 30 to 90 minutes after the first all-sources run reached the old 30-minute GitHub Actions timeout.
 
 Deployment implementation note:
@@ -582,6 +583,7 @@ Status: **done**.
 - Added `.github/workflows/deploy-dashboard.yml`.
 - Created app-scoped Fly deploy token.
 - Stored token as GitHub secret `FLY_API_TOKEN`.
+- Passed the same secret as both `FLY_API_TOKEN` and `FLY_ACCESS_TOKEN` in the deploy job for flyctl compatibility.
 
 ## Acceptance Criteria
 
@@ -611,7 +613,7 @@ The deployment work is complete when all are true:
 1. Read only this document first.
 2. Confirm current git status.
 3. Review/commit the local changes.
-4. Push to `main` when ready; CI should run first, then `Deploy dashboard` should deploy via `FLY_API_TOKEN`.
+4. Push to `main` when ready; CI should run first, then `Deploy dashboard` should deploy via `FLY_API_TOKEN`/`FLY_ACCESS_TOKEN`.
 5. If manually deploying from this Windows machine, use local Docker build with:
    `flyctl deploy --local-only --build-arg "UV_SYNC_FLAGS=--allow-insecure-host pypi.org --allow-insecure-host files.pythonhosted.org" -a finance-agent-dashboard`
 6. Verify after any deploy:
