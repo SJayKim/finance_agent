@@ -24,6 +24,7 @@
   - GitHub secret `FLY_API_TOKEN`을 등록했다.
   - GitHub Actions runtime에서는 flyctl 호환성을 위해 같은 secret을 `FLY_API_TOKEN`과 `FLY_ACCESS_TOKEN` 둘 다로 전달한다.
   - deploy token 검증이 로컬에서 성공한 `flyctl` `0.4.64`로 Actions 버전을 pin했다.
+  - app-scoped deploy token으로 Fly remote builder가 `unauthorized`를 반환해서 Actions 배포는 GitHub runner Docker 기반 `--local-only`로 수행한다.
 - daily scheduler는 그대로 GitHub Actions에 둔다. Fly는 dashboard runtime만 담당한다.
 
 ## Current State
@@ -102,6 +103,7 @@ Completed on 2026-07-03 KST:
 - Auto deploy workflow was added after manual deploy success.
 - GitHub secret `FLY_API_TOKEN` was created from a Fly app-scoped deploy token and passed to flyctl as both `FLY_API_TOKEN` and `FLY_ACCESS_TOKEN`.
 - The deploy workflow pins `flyctl` to `0.4.64`, matching the local version that successfully validated the deploy token.
+- The deploy workflow uses `flyctl deploy --local-only` because the app-scoped deploy token authenticated but could not start Fly remote builder heartbeats.
 - `daily.yml` timeout was raised from 30 to 90 minutes after the first all-sources run reached the old 30-minute GitHub Actions timeout.
 
 Deployment implementation note:
@@ -587,6 +589,7 @@ Status: **done**.
 - Stored token as GitHub secret `FLY_API_TOKEN`.
 - Passed the same secret as both `FLY_API_TOKEN` and `FLY_ACCESS_TOKEN` in the deploy job for flyctl compatibility.
 - Pinned GitHub Actions flyctl to `0.4.64` after `0.4.66` returned `Authenticate: token validation error` with the same deploy token.
+- Switched deploy command to `flyctl deploy --local-only -a finance-agent-dashboard` after remote builder returned `unauthorized` for the app-scoped token.
 
 ## Acceptance Criteria
 
