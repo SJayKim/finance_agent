@@ -29,6 +29,21 @@
 
 ## Current State
 
+### Current Status Snapshot (2026-07-03 KST)
+
+- Latest pushed commit on `main`: `ff4ccac` (`fix(ci): deploy fly app with local build`).
+- Latest GitHub Actions CI run: `28632816089`, `success`, commit `ff4ccace5f0d0f33a339844f2a007317c148d0e8`.
+- Latest GitHub Actions `Deploy dashboard` run: `28632846640`, `success`, triggered by the successful CI workflow.
+- Fly app: `finance-agent-dashboard`.
+- Latest verified Fly image: `finance-agent-dashboard:deployment-01KWJT6T8ZESZSCCH0H77BM26F`.
+- Fly machine version after deploy: `3` in `nrt`.
+- Live smoke checks after deploy:
+  - `GET /health` -> `200`
+  - unauthenticated `GET /` -> `401`
+  - authenticated `GET /` -> `200`
+- Daily workflow timeout is now `90` minutes on `main`.
+- Intentional deploy work is committed and pushed. The only remaining local working-tree changes are unrelated pre-existing `docs/learnings/*` deletions.
+
 ### What Is Already Production
 
 현재 production으로 간주할 수 있는 것은 **Supabase-backed daily data pipeline**이다.
@@ -61,7 +76,10 @@ FastAPI/Jinja dashboard is now deployed on Fly.io.
 - Tooling: `flyctl` was installed with `winget` on 2026-07-03 KST.
 - Auth state: `flyctl auth whoami` succeeds as `cyon13022@gmail.com`.
 - App state: `finance-agent-dashboard` is deployed in `nrt` with two app machines.
-- Latest verified image tag: `deployment-01KWJNP7FF2WHH4HEXRR0SDHAD`
+- Latest verified image tag: `deployment-01KWJT6T8ZESZSCCH0H77BM26F`
+- Latest deployed commit: `ff4ccace5f0d0f33a339844f2a007317c148d0e8`
+- Latest successful CI run: `28632816089`
+- Latest successful deploy run: `28632846640`
 - Fly secrets deployed:
   - `DATABASE_URL`
   - `ANTHROPIC_API_KEY`
@@ -105,6 +123,9 @@ Completed on 2026-07-03 KST:
 - The deploy workflow pins `flyctl` to `0.4.64`, matching the local version that successfully validated the deploy token.
 - The deploy workflow uses `flyctl deploy --local-only` because the app-scoped deploy token authenticated but could not start Fly remote builder heartbeats.
 - `daily.yml` timeout was raised from 30 to 90 minutes after the first all-sources run reached the old 30-minute GitHub Actions timeout.
+- Pushed all deploy work to `main`.
+- Verified latest CI and `Deploy dashboard` workflow success on GitHub Actions.
+- Verified production smoke checks after the automated deploy.
 
 Deployment implementation note:
 
@@ -121,20 +142,7 @@ uv run ruff check .  -> All checks passed
 uv run mypy .        -> Success: no issues found in 69 source files
 ```
 
-Current working tree after this progress contains local, uncommitted changes:
-
-```text
-M app/config.py
-M app/main.py
-M Dockerfile
-A .github/workflows/deploy-dashboard.yml
-M docs/plans/07-dashboard-production-deploy.md
-M tests/conftest.py
-M tests/test_digest_view.py
-M tests/test_health.py
-M tests/test_rag_chat.py
-M tests/test_web.py
-```
+Current intentional deploy work is committed and pushed to `main`.
 
 Current working tree also contains unrelated pre-existing deletions not made as part of this deploy work:
 
