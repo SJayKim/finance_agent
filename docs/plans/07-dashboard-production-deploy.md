@@ -31,18 +31,19 @@
 
 ### Current Status Snapshot (2026-07-03 KST)
 
-- Latest pushed commit on `main`: `ff4ccac` (`fix(ci): deploy fly app with local build`).
-- Latest GitHub Actions CI run: `28632816089`, `success`, commit `ff4ccace5f0d0f33a339844f2a007317c148d0e8`.
-- Latest GitHub Actions `Deploy dashboard` run: `28632846640`, `success`, triggered by the successful CI workflow.
+- Latest app-deployed commit on `main`: `8a573e3` (`docs: update dashboard deploy current status`).
+- Latest GitHub Actions CI run: `28633753579`, `success`, commit `8a573e31649f167fbed6f5d1ff3d09d0730a7800`.
+- Latest GitHub Actions `Deploy dashboard` run: `28633783708`, `success`, triggered by the successful CI workflow.
 - Fly app: `finance-agent-dashboard`.
-- Latest verified Fly image: `finance-agent-dashboard:deployment-01KWJT6T8ZESZSCCH0H77BM26F`.
-- Fly machine version after deploy: `3` in `nrt`.
+- Latest verified Fly image: `finance-agent-dashboard:deployment-01KWJVS5VEV69V39EV96P2S925`.
+- Fly machine version after deploy: `4` in `nrt`.
 - Live smoke checks after deploy:
   - `GET /health` -> `200`
   - unauthenticated `GET /` -> `401`
   - authenticated `GET /` -> `200`
 - Daily workflow timeout is now `90` minutes on `main`.
 - Intentional deploy work is committed and pushed. The only remaining local working-tree changes are unrelated pre-existing `docs/learnings/*` deletions.
+- Future status-only documentation commits should use `[skip ci]` to avoid a CI -> deploy -> status-doc loop.
 
 ### What Is Already Production
 
@@ -76,10 +77,10 @@ FastAPI/Jinja dashboard is now deployed on Fly.io.
 - Tooling: `flyctl` was installed with `winget` on 2026-07-03 KST.
 - Auth state: `flyctl auth whoami` succeeds as `cyon13022@gmail.com`.
 - App state: `finance-agent-dashboard` is deployed in `nrt` with two app machines.
-- Latest verified image tag: `deployment-01KWJT6T8ZESZSCCH0H77BM26F`
-- Latest deployed commit: `ff4ccace5f0d0f33a339844f2a007317c148d0e8`
-- Latest successful CI run: `28632816089`
-- Latest successful deploy run: `28632846640`
+- Latest verified image tag: `deployment-01KWJVS5VEV69V39EV96P2S925`
+- Latest deployed commit: `8a573e31649f167fbed6f5d1ff3d09d0730a7800`
+- Latest successful CI run: `28633753579`
+- Latest successful deploy run: `28633783708`
 - Fly secrets deployed:
   - `DATABASE_URL`
   - `ANTHROPIC_API_KEY`
