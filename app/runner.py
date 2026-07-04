@@ -87,7 +87,9 @@ def build_default_connectors() -> list[tuple[str, Connector]]:
         naver_queries = load_coverage_queries(session)
     return [
         ("rss", RssConnector()),
-        ("naver", NaverNewsConnector(naver_queries)),
+        # display=30: 시딩 후 쿼리 7개 × display 100 = 일 ~700건이 분석 상한·Actions 시간을
+        # 압도했다(7/2 timeout). 일일 실행의 수집량 정책은 runner 소관 — 커넥터 기본값은 유지.
+        ("naver", NaverNewsConnector(naver_queries, display=30)),
         ("opendart_docs", OpenDartDocsConnector()),
         ("edgar_docs", EdgarDocsConnector(ciks=[])),  # CIK 유니버스는 DB/커버리지에서(§2)
         ("marketaux", MarketauxConnector()),

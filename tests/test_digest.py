@@ -7,6 +7,7 @@ DB 테스트(db 픽스처): build_digest의 빈 날·grounded·멱등·degraded 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from typing import Any, cast
 
 import anthropic
 import httpx
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -161,12 +163,36 @@ def test_digester_returns_none_on_malformed_json() -> None:
     assert anthropic_digester(client, "m")([_input(1, ["a"])]) is None
 
 
-def test_digester_returns_none_on_api_error() -> None:
+def test_digester_returns_none_on_api_error(caplog: pytest.LogCaptureFixture) -> None:
     def create(**kwargs: Any) -> Any:
         raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api"))
 
     client = cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
-    assert anthropic_digester(client, "m")([_input(1, ["x"])]) is None
+    with caplog.at_level(logging.WARNING):
+        assert anthropic_digester(client, "m")([_input(1, ["x"])]) is None
+    # 예외 무기록 회귀 방지 — 7/2 digest degraded가 "원인 미상"으로 남았던 진단 공백.
+    assert "digester failed" in caplog.text
+
+
+def test_digester_warns_on_pass2_max_tokens_stop_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """stop_reason=max_tokens면 잘림 경고 로그 — 파싱이 성공해도 진단 단서를 남긴다."""
+    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
+    pass2 = SimpleNamespace(content=[_text_block('{"sections": []}')], stop_reason="max_tokens")
+    client, _ = _fake_client([pass1, pass2])
+    with caplog.at_level(logging.WARNING):
+        anthropic_digester(client, "m")([_input(1, ["a"])])
+    assert "truncated" in caplog.text
+
+
+def test_digester_pass2_requests_8192_tokens() -> None:
+    """패스2 max_tokens=8192 — 브리프 많은 날 4096 잘림(7/2 degraded) 재발 방지."""
+    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
+    pass2 = SimpleNamespace(content=[_text_block('{"sections": []}')])
+    client, calls = _fake_client([pass1, pass2])
+    anthropic_digester(client, "m")([_input(1, ["a"])])
+    assert calls[1]["max_tokens"] == 8192
 
 
 def test_digester_returns_none_on_truncated_json() -> None:

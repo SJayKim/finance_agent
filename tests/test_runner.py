@@ -17,12 +17,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import sessionmaker
 
 from app.collector.base import Connector, NormalizedDoc
+from app.collector.naver import NaverNewsConnector
 from app.db import SessionLocal
 from app.models import AuditLog, BriefItem, DailyDigest, RawDocument, Source
 from app.runner import (
     DailyRunAlreadyRunning,
     SourceResult,
     _DAILY_LOCK_KEY,
+    build_default_connectors,
     run_daily,
 )
 
@@ -187,6 +189,14 @@ def test_run_daily_no_seeder_by_default(db: sessionmaker) -> None:
     )
     actions = _audit_actions(db)
     assert actions.count("seed") == 0
+
+
+def test_default_connectors_cap_naver_display(db: sessionmaker) -> None:
+    """일일 실행 수집량 정책: naver display=30 — 쿼리 확장(시딩) 후 수집 폭주 회귀 방지."""
+    connectors = dict(build_default_connectors())
+    naver = connectors["naver"]
+    assert isinstance(naver, NaverNewsConnector)
+    assert naver.display == 30
 
 
 def test_run_daily_runs_pipeline_and_digest(db: sessionmaker) -> None:

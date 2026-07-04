@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 
 import anthropic
 import httpx
+import pytest
 
 from app.pipeline.citations import (
     _PASS2_SCHEMA,
@@ -137,12 +139,26 @@ def test_analyzer_returns_none_when_no_groundable_docs() -> None:
     assert calls == []  # API 미호출
 
 
-def test_analyzer_returns_none_on_api_error() -> None:
+def test_analyzer_returns_none_on_api_error(caplog: pytest.LogCaptureFixture) -> None:
     def create(**kwargs: Any) -> Any:
         raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api"))
 
     client = cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
-    assert anthropic_analyzer(client, "m")([_doc(10)]) is None
+    with caplog.at_level(logging.WARNING):
+        assert anthropic_analyzer(client, "m")([_doc(10)]) is None
+    assert "impact analyzer failed" in caplog.text  # 예외 무기록(진단 불가) 회귀 방지
+
+
+def test_analyzer_returns_none_on_pass2_json_truncation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """패스2 JSON 잘림(JSONDecodeError) → 분석 루프 크래시 대신 None(degraded) + warning."""
+    pass1 = SimpleNamespace(content=[_text_block("Bitcoin rally", [_cite(0, "tops $100K")])])
+    pass2 = SimpleNamespace(content=[_text_block('{"event_type": "price_mo')])  # 잘린 JSON
+    client, _ = _fake_client([pass1, pass2])
+    with caplog.at_level(logging.WARNING):
+        assert anthropic_analyzer(client, "m")([_doc(10)]) is None
+    assert "JSONDecodeError" in caplog.text
 
 
 def test_pass2_schema_has_no_unsupported_integer_bounds() -> None:

@@ -21,6 +21,10 @@ _TEST_DATABASE_URL = os.environ.get(
     "postgresql+psycopg://postgres:postgres@localhost:5433/finance_agent_test",
 )
 os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+# 개발자 .env에 실 키가 있어도 테스트는 오프라인이어야 한다 — run_pipeline은 analyzer
+# 미주입 시 키 유무로 실 Anthropic 분석기를 자동 생성한다(라이브 Opus 호출·과금 방지).
+# env가 .env보다 우선하므로 빈 값으로 고정. 키가 필요한 테스트는 monkeypatch로 켠다.
+os.environ["ANTHROPIC_API_KEY"] = ""
 os.environ.setdefault("DASHBOARD_USERNAME", "test-dashboard")
 os.environ.setdefault("DASHBOARD_PASSWORD", "test-password")
 DASHBOARD_AUTH = (os.environ["DASHBOARD_USERNAME"], os.environ["DASHBOARD_PASSWORD"])

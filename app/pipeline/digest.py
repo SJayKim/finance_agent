@@ -19,6 +19,7 @@ citations.py의 2-패스 경계를 그대로 재사용한다:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -31,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.models import BriefItem, Citation, DailyDigest, DigestSource
 from app.pipeline.citations import CitedSpan
+
+logger = logging.getLogger(__name__)
 
 _EMPTY_BODY = "오늘은 추적 가능한 근거가 없습니다."
 _DEGRADED_BODY = "다이제스트 생성기를 사용할 수 없어 오늘 요약을 만들지 못했습니다."
@@ -208,11 +211,13 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                 return []
             pass2 = client.messages.create(
                 model=model,
-                max_tokens=4096,  # 2048은 브리프 많은 날 JSON이 잘려(Unterminated string) 파싱 실패
+                max_tokens=8192,  # 4096도 브리프 많은 날(7/2 degraded) JSON이 잘림 — 하루 1콜이라 비용 무시
                 system=_PASS2_SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
             )
+            if getattr(pass2, "stop_reason", None) == "max_tokens":
+                logger.warning("digest pass2 truncated at max_tokens — JSON may be cut")
             data = json.loads(_first_text(pass2.content) or "{}")
             # 같은 section 키로 여러 테마를 돌려줄 수 있다(예: 크립토 일색인 날 전부 "macro").
             # uq_daily_digests_date_section은 (brief_date, section) 유일을 강제하므로 키별로
@@ -241,9 +246,10 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                     source_brief_item_ids=list(source_ids),
                 )
             return list(sections.values())
-        except (anthropic.APIError, json.JSONDecodeError):
+        except (anthropic.APIError, json.JSONDecodeError) as exc:
             # APIError: 쿼터 소진·장애. JSONDecodeError: 패스2 구조화 JSON 잘림(max_tokens)
             # — 둘 다 환각 대신 degraded로 떨어뜨려 daily_run 전체를 죽이지 않는다(§10).
+            logger.warning("digester failed: %s: %s", type(exc).__name__, exc)
             return None
 
     return digest

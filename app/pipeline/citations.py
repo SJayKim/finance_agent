@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import ssl
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ import anthropic
 import truststore
 from anthropic import DefaultHttpxClient
 from anthropic.types import MessageParam
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -214,7 +217,10 @@ def anthropic_analyzer(client: anthropic.Anthropic, model: str) -> ImpactAnalyze
                 confidence=data.get("confidence"),
                 impact_score=data.get("impact_score"),
             )
-        except anthropic.APIError:
+        except (anthropic.APIError, json.JSONDecodeError) as exc:
+            # APIError: 쿼터 소진·소스 다운·장애. JSONDecodeError: 패스2 JSON 잘림(max_tokens)
+            # — digest.py와 동일하게 클러스터 하나의 실패가 분석 루프 전체를 죽이지 않게 한다.
+            logger.warning("impact analyzer failed: %s: %s", type(exc).__name__, exc)
             return None  # 쿼터 소진·소스 다운·장애 → degraded
 
     return analyze
