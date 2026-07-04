@@ -85,6 +85,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - OpenDART `document.xml`은 원본파일 없는 공시(자동생성·요약 공시 등)에 ZIP 대신 `<status>014</status>` XML을 **200**으로 반환한다(실측 2026-06-26: 100건 중 34건). 무조건 unzip하면 `BadZipFile`로 **소스 전체가 error**가 된다. ZIP 매직(`resp.content`가 `b"PK"`로 시작)을 검사해 비-ZIP이면 그 공시만 건너뛸 것. (2026-06-26, app/collector/opendart_docs.py)
 - publisher RSS 피드는 기본 httpx UA에 **403**을 주거나(예: `mk.co.kr`) 엔드포인트가 폐지될 수 있다(예: `feeds.reuters.com` ConnectError). RssConnector는 한 피드 실패가 `raise_for_status()`로 소스 전체를 죽이므로, 브라우저 User-Agent 헤더를 보내고(403 회피) 죽은 피드는 `DEFAULT_FEEDS`에서 제거할 것. (2026-06-26, app/collector/rss.py)
 - alembic `migrations/env.py`에서 DB 접속 문자열을 `config.set_main_option("sqlalchemy.url", …)`/`get_section`(configparser)으로 왕복시키면, URL-인코딩된 비밀번호의 `%`(`%40` 등)를 configparser BasicInterpolation이 보간 문법으로 오인해 `ValueError: invalid interpolation syntax`로 env.py import 단계에서 죽는다(특수문자 비밀번호의 매니지드 DB에서 무조건 재현). URL은 configparser에 넣지 말고 `create_engine(settings.database_url, …)`로 직접 넘길 것. (2026-06-28, migrations/env.py run_migrations_online)
+- 아이템당 외부 API를 부르는 파이프라인 루프에는 상한(cap)·진행 커밋(checkpoint)·진행 로그가 필수. 수집량 증가(키 추가로 225→1,000건/일)로 무상한 Opus/OpenFIGI 루프가 GitHub Actions timeout(30/90분)에 걸렸고, 단일 트랜잭션이라 전량 롤백 — 2일치 브리프·다이제스트와 LLM 비용 소실. (2026-07-04, app/pipeline/pipeline.py run_pipeline / analyze_impact / ticker_link)
 
 ## Measurable Conventions
 <!-- 측정 가능한 것만. "잘 짜라" 같은 추상 표현 금지 -->

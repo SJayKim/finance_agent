@@ -11,12 +11,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import BriefItem, Citation, Cluster, RawDocument, Source
 from app.pipeline.citations import CitedSpan, ImpactResult, SourceDoc
-from app.pipeline.pipeline import run_pipeline
+from app.pipeline.pipeline import analyze_impact, run_pipeline
 
 _BRIEF_DATE = date(2026, 6, 20)
 _IN_WINDOW = datetime(2026, 6, 20, 12, tzinfo=timezone.utc)  # 신선도 윈도우(24h) 내
@@ -127,3 +128,67 @@ def test_analyze_impact_rerun_skips_ok_items(db: sessionmaker) -> None:
     run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=_grounded_analyzer)
     run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=_grounded_analyzer)  # ok는 재분석 안 함
     assert _citation_count(db) == 2  # 중복 인용 적재 없음
+
+
+# --- 상한·점진 커밋 (2026-07-04 timeout 전량 롤백 회귀 방지) ---
+
+
+def test_analyze_cap_prioritizes_multisource_and_resumes(db: sessionmaker) -> None:
+    """상한=1이면 멤버 수 많은(멀티소스) 클러스터부터 1건만 분석하고, 재실행이 이어서 분석한다."""
+    _seed(db)
+    calls: list[int] = []  # 호출당 클러스터 소스 문서 수
+
+    def counting_analyzer(docs: Sequence[SourceDoc]) -> ImpactResult | None:
+        calls.append(len(docs))
+        return _grounded_analyzer(docs)
+
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=counting_analyzer, impact_max_clusters=1)
+    assert calls == [2]  # 멤버 2(근접중복 클러스터)가 단독(1)보다 우선
+    with db() as s:
+        statuses = sorted(s.execute(select(BriefItem.status)).scalars())
+    assert statuses == ["empty", "ok"]  # 상한 밖은 손대지 않아 empty 유지
+
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=counting_analyzer, impact_max_clusters=1)
+    assert calls == [2, 1]  # 재실행이 남은 empty를 이어서 분석(멱등)
+    with db() as s:
+        statuses = sorted(s.execute(select(BriefItem.status)).scalars())
+    assert statuses == ["ok", "ok"]
+
+
+def test_skeleton_survives_analyzer_crash(db: sessionmaker) -> None:
+    """분석기가 죽어도(timeout 강제 종료 상당) 골격 커밋이 남는다 — 전량 롤백 회귀 방지."""
+    _seed(db)
+
+    def crashing_analyzer(docs: Sequence[SourceDoc]) -> ImpactResult | None:
+        raise RuntimeError("simulated kill")
+
+    with pytest.raises(RuntimeError):
+        run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=crashing_analyzer)
+    assert _counts(db) == (2, 2)  # clusters/brief_items(empty)는 커밋돼 있다
+    with db() as s:
+        statuses = s.execute(select(BriefItem.status)).scalars().all()
+    assert all(status == "empty" for status in statuses)
+
+
+def test_analyze_impact_checkpoint_persists_progress(db: sessionmaker) -> None:
+    """checkpoint_every=1: 2건째에서 죽어도 1건째 분석(ok)은 커밋돼 새 세션에서 보인다."""
+    _seed(db)
+    run_pipeline(_BRIEF_DATE, dictionary={}, analyzer=None)  # 골격만(분석 비활성)
+    calls = {"n": 0}
+
+    def flaky_analyzer(docs: Sequence[SourceDoc]) -> ImpactResult | None:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("simulated kill on second item")
+        return _grounded_analyzer(docs)
+
+    with db() as s:
+        with pytest.raises(RuntimeError):
+            analyze_impact(
+                s, _BRIEF_DATE, flaky_analyzer, checkpoint=s.commit, checkpoint_every=1
+            )
+    with db() as s:
+        ok_n = s.execute(
+            select(func.count()).select_from(BriefItem).where(BriefItem.status == "ok")
+        ).scalar_one()
+    assert ok_n == 1

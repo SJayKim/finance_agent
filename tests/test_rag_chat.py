@@ -196,6 +196,8 @@ def test_chat_cumulative_scope_uses_rag(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_chat_cumulative_disabled_when_no_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """키는 있는데 임베더가 없는 서버(Fly 이미지) — '키 미설정' 오진 대신 임베더 부재 안내."""
+    monkeypatch.setattr("app.main.settings.anthropic_api_key", "test-key")
     monkeypatch.setattr("app.main._rag_analyzer", lambda: None)
     resp = client.post(
         "/chat",
@@ -203,7 +205,21 @@ def test_chat_cumulative_disabled_when_no_embedder(monkeypatch: pytest.MonkeyPat
         auth=DASHBOARD_AUTH,
     )
     assert resp.status_code == 200
-    assert "채팅 비활성" in resp.text
+    assert "누적 검색 비활성" in resp.text
+    assert "임베딩 모델 미설치" in resp.text
+    assert "ANTHROPIC_API_KEY" not in resp.text  # 오진 문구 회귀 방지
+
+
+def test_chat_cumulative_disabled_when_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.main.settings.anthropic_api_key", None)
+    monkeypatch.setattr("app.main._rag_analyzer", lambda: None)
+    resp = client.post(
+        "/chat",
+        data={"q": "질문", "scope": "cumulative"},
+        auth=DASHBOARD_AUTH,
+    )
+    assert resp.status_code == 200
+    assert "채팅 비활성 (ANTHROPIC_API_KEY 미설정)" in resp.text
 
 
 def test_chat_cumulative_empty_input_refuses_without_calling_analyzer(

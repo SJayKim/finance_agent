@@ -8,7 +8,7 @@
 
 경계:
 - 사전은 주입 인자다. KR/US/CRYPTO 종목 유니버스를 하드코딩하지 않는다(§2 규칙).
-- 정규화기(normalizer)도 주입. 라이브 OpenFIGI 어댑터는 openfigi_normalizer.
+- 정규화기(normalizer)도 주입. 라이브 OpenFIGI 어댑터는 cached_openfigi_normalizer.
 - 매칭은 왼쪽 경계 인식(소문자)이다: 별칭 왼쪽에 문자/숫자가 붙으면 더 긴 단어의 일부라
   매치 안 함(§6.4 precision, '이닉스'가 '하이닉스' 안). 한국어 조사는 오른쪽에만 붙어 접미는
   허용. 짧은(≤2자) 별칭과 큐레이션 모호어(_AMBIGUOUS_ALIASES)는 경계를 통과해도 중의성
@@ -17,10 +17,17 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+import httpx
+
+from app.pipeline.openfigi import OpenFIGIError, OpenFIGIRateLimited
 from app.pipeline.openfigi import normalize as _openfigi_normalize
+
+_log = logging.getLogger(__name__)
 
 # market → OpenFIGI exchCode. KR=KOSPI(KS); KOSDAQ(KQ)·다중거래소는 §6.4 데이터 작업.
 _MARKET_EXCH = {"US": "US", "KR": "KS"}
@@ -96,14 +103,41 @@ def resolve(
     return links
 
 
-def openfigi_normalizer(ticker: str, market: str) -> str | None:
-    """resolve의 normalizer로 쓰는 라이브 OpenFIGI 어댑터. 표준 티커 or None(보류).
+def cached_openfigi_normalizer(
+    client: httpx.Client, *, sleep: Callable[[float], None] = time.sleep
+) -> Callable[[str, str], str | None]:
+    """배치용 라이브 OpenFIGI normalizer: 주입된 단일 클라이언트 재사용 + (ticker, market) 캐시.
 
-    종목마다 클라이언트를 1회용으로 연다. 배치에서 한 클라이언트를 재사용하려면
-    openfigi.normalize(..., client=...)로 직접 클로저를 짜라(골격은 단순 우선).
+    무캐시 1회용 클라이언트 버전은 수집량 증가 시 브리프당 라이브 호출이 선형 폭주해
+    무키 25req/분 한도와 GitHub Actions timeout에 걸렸다(2026-07-04). 안전판:
+    - OpenFIGIRateLimited(재시도 소진) → 이후 모든 호출 즉시 None — resolve가
+      is_candidate=True 보류로 남기는 기존 §6.4 의미론 그대로, 파이프라인은 계속.
+    - OpenFIGIError → 해당 키만 None 캐시(다른 종목 확인은 계속).
     """
-    exch = _MARKET_EXCH.get(market)
-    if exch is None:
-        return None
-    result = _openfigi_normalize("TICKER", ticker, exch)
-    return result.ticker if result else None
+    cache: dict[tuple[str, str], str | None] = {}
+    rate_limited = False
+
+    def normalizer(ticker: str, market: str) -> str | None:
+        nonlocal rate_limited
+        exch = _MARKET_EXCH.get(market)
+        if exch is None:
+            return None
+        key = (ticker, market)
+        if key in cache:
+            return cache[key]
+        if rate_limited:
+            return None  # 한도 소진 — 남은 종목은 보류(캐시 안 함: 다음 실행에서 재확인)
+        try:
+            result = _openfigi_normalize("TICKER", ticker, exch, client=client, sleep=sleep)
+        except OpenFIGIRateLimited as exc:
+            rate_limited = True
+            _log.warning("OpenFIGI rate limited — remaining links held as candidates: %s", exc)
+            return None
+        except OpenFIGIError as exc:
+            _log.warning("OpenFIGI error for %s/%s — held as candidate: %s", ticker, market, exc)
+            cache[key] = None
+            return None
+        cache[key] = result.ticker if result else None
+        return cache[key]
+
+    return normalizer

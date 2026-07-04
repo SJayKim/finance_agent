@@ -1,4 +1,6 @@
-from app.pipeline.ticker_link import TickerLink, resolve
+import httpx
+
+from app.pipeline.ticker_link import TickerLink, cached_openfigi_normalizer, resolve
 
 
 def test_resolves_exact_dictionary_hit() -> None:
@@ -100,3 +102,38 @@ def test_standalone_korean_alias_stays_confident() -> None:
     assert resolve("오늘 삼성전자는 신고가", dictionary) == [
         TickerLink(ticker="005930", market="KR", is_candidate=False)
     ]
+
+
+# --- cached_openfigi_normalizer (배치 캐시 + 429 안전판, 2026-07-04) ---
+
+
+def test_cached_normalizer_reuses_result_for_same_ticker() -> None:
+    """같은 (ticker, market)은 캐시로 재사용 — HTTP는 1회만."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, json=[{"data": [{"ticker": "AAPL", "exchCode": "UW"}]}])
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        normalizer = cached_openfigi_normalizer(client)
+        assert normalizer("aapl", "US") == "AAPL"
+        assert normalizer("aapl", "US") == "AAPL"
+    assert calls["n"] == 1
+
+
+def test_cached_normalizer_short_circuits_after_persistent_429() -> None:
+    """재시도 소진(OpenFIGIRateLimited) 후엔 이후 티커에 HTTP 0회로 즉시 None(보류)."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429, headers={"Retry-After": "1"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        normalizer = cached_openfigi_normalizer(client, sleep=lambda _s: None)
+        assert normalizer("AAPL", "US") is None  # 파이프라인을 죽이지 않고 보류
+        after_first = calls["n"]
+        assert after_first >= 1
+        assert normalizer("MSFT", "US") is None
+        assert calls["n"] == after_first  # 추가 HTTP 없음

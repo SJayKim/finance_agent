@@ -58,8 +58,11 @@ def _best_record(records: list[dict[str, str]]) -> dict[str, str]:
     return min(records, key=lambda r: _EXCH_PRIORITY.get(r.get("exchCode", ""), 999))
 
 
-def _client() -> httpx.Client:
-    # OS 인증서 저장소 신뢰(사내 TLS 가로채기 대응; rss.py와 동일 패턴).
+def make_client() -> httpx.Client:
+    """OpenFIGI용 httpx 클라이언트(키 헤더 포함). 배치는 이걸 한 번 열어 재사용한다.
+
+    OS 인증서 저장소 신뢰(사내 TLS 가로채기 대응; rss.py와 동일 패턴).
+    """
     ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     headers = {"Content-Type": "application/json"}
     if settings.openfigi_api_key:
@@ -91,7 +94,7 @@ def normalize(
         job["exchCode"] = exch_code
 
     owns = client is None
-    http = client or _client()
+    http = client or make_client()
     last: httpx.Response | None = None
     try:
         for attempt in range(max_retries + 1):

@@ -1,5 +1,6 @@
 """FastAPI 골격: health + 온디맨드 트리거 + 증거 브리프 대시보드 (STAGE1_DESIGN §3, §4)."""
 
+import importlib.util
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -89,6 +90,23 @@ def _chat_analyzer() -> ChatAnalyzer | None:
     return anthropic_chat(build_client(settings.anthropic_api_key), settings.impact_model)
 
 
+_NO_KEY_MSG = "채팅 비활성 (ANTHROPIC_API_KEY 미설정)"
+_NO_EMBEDDER_MSG = "누적 검색 비활성 — 서버에 임베딩 모델 미설치 ('이 날짜' 범위는 사용 가능)"
+
+
+def _rag_available() -> bool:
+    """누적 RAG 가용성의 싼 확인: 키 + sentence-transformers 설치 여부(모델 로드 없이).
+
+    대시보드 렌더에서 get_embedder()(2GB 모델 로드)를 부르면 안 된다(§4 규약) —
+    find_spec은 import 없이 설치 여부만 본다. Fly 이미지는 임베더 미설치(의도된 설계)라
+    False → 누적 라디오 disabled + 툴팁. 예전엔 키만 봐서 임베더 없는 서버가 원인을
+    "키 미설정"으로 오진했다(2026-07-04).
+    """
+    if not settings.anthropic_api_key or settings.embedding_model is None:
+        return False
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
 def _rag_analyzer() -> RagChatAnalyzer | None:
     """키 + 임베더 둘 다 있으면 누적 RAG 채팅 분석기(§4 트랙 D2), 하나라도 없으면 None(graceful 비활성).
 
@@ -161,9 +179,9 @@ def run_daily_endpoint() -> dict[str, object]:
 def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
     """추적성 뷰 + 일일 다이제스트 + 소스 헬스 (§4 트랙 E / §8.6).
 
-    rag_enabled는 키 유무만 본다 — 여기서 get_embedder()를 부르지 않는다(2GB bge-m3가
-    페이지 렌더에 로드되면 안 됨, §4). 누적 토글은 채팅이 켜지면 노출되고, 임베더가 없으면
-    누적 선택 시 첫 질의에서 graceful하게 '채팅 비활성'으로 떨어진다.
+    rag_enabled는 _rag_available()(키 + 라이브러리 설치 여부의 싼 확인) — 여기서
+    get_embedder()를 부르지 않는다(2GB bge-m3가 페이지 렌더에 로드되면 안 됨, §4).
+    누적 토글은 채팅이 켜지면 노출되고, 임베더 없는 서버는 disabled + 툴팁으로 렌더된다.
     """
     today = datetime.now(_KST).date()
     with SessionLocal() as session:
@@ -198,7 +216,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
             "next_date": (brief_date + timedelta(days=1)).isoformat(),
             "last_updated": last_updated,
             "chat_enabled": bool(settings.anthropic_api_key),
-            "rag_enabled": bool(settings.anthropic_api_key),
+            "rag_enabled": _rag_available(),
         },
     )
 
@@ -216,12 +234,16 @@ def chat(
     경로. 키/임베더 없음 → '채팅 비활성'. 빈 입력/인용 0/장애 → '관련 근거 없음'(graceful, HTTP
     200). 거부 판정은 인용 유무가 유일 기준 — 두 경로 모두 LLM 텍스트로 판정하지 않는다.
     """
-    ctx: dict[str, object] = {"answer": None, "disabled": False}
+    ctx: dict[str, object] = {"answer": None, "disabled": False, "disabled_msg": None}
     question = q.strip()
     if scope == "cumulative":
         rag = _rag_analyzer()
         if rag is None:
+            # 원인 구분: 키 없음 vs 임베더 없음(Fly 이미지는 의도적으로 임베더 미설치).
             ctx["disabled"] = True
+            ctx["disabled_msg"] = (
+                _NO_KEY_MSG if not settings.anthropic_api_key else _NO_EMBEDDER_MSG
+            )
             return templates.TemplateResponse(request, "_chat_answer.html", ctx)
         if question:
             with SessionLocal() as session:
@@ -231,6 +253,7 @@ def chat(
     analyzer = _chat_analyzer()
     if analyzer is None:
         ctx["disabled"] = True
+        ctx["disabled_msg"] = _NO_KEY_MSG
         return templates.TemplateResponse(request, "_chat_answer.html", ctx)
     if question:
         brief_date = _parse_date(date)

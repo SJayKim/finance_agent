@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # status=empty 유지(골격만). impact_model은 설계 §7 고정값(claude-opus-4-8).
     anthropic_api_key: str | None = None
     impact_model: str = "claude-opus-4-8"
+    # 분석 루프 상한: 클러스터당 Opus 2-패스 ~8초 실측 × 150 ≈ 20분. 무상한 루프가 수집량
+    # 증가(일 ~1,000건)에 선형 폭주해 Actions timeout → 전량 롤백된 사고 방지(2026-07-04).
+    # 상한 밖은 status=empty로 남아 다음 실행이 이어서 분석. env로 오버라이드 가능(백필용).
+    impact_analyze_max_clusters: int = 150
 
     # Dashboard Basic Auth. Protected routes fail closed unless both values are set.
     dashboard_username: str | None = None

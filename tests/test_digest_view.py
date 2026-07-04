@@ -116,10 +116,51 @@ def test_load_source_health_reads_latest_daily_run(db: sessionmaker) -> None:
     assert health is not None
     assert health.digest_status == "ok"  # 최신(_T_NEW) 행
     assert health.ran_at == _T_NEW
+    assert health.incomplete is False  # 완주한 날 — fallback 아님
     names = {src.name: src for src in health.sources}
     assert names["rss"].status == "ok"
     assert names["opendart"].status == "error"
     assert names["opendart"].error == "key missing"
+
+
+def _source_fetch_row(ts: datetime, name: str, status: str, attempted: int) -> AuditLog:
+    return AuditLog(
+        ts=ts,
+        actor="run_daily",
+        action="source_fetch",
+        payload={"name": name, "status": status, "attempted": attempted, "error": None},
+    )
+
+
+def test_load_source_health_falls_back_to_source_fetch(db: sessionmaker) -> None:
+    """daily_run이 없는 날(실행 미완주) → source_fetch 이름별 최신 병합 + incomplete=True."""
+    with db() as s:
+        s.add_all(
+            [
+                _source_fetch_row(_T_OLD, "rss", "error", 0),
+                _source_fetch_row(_T_NEW, "rss", "ok", 5),  # 같은 이름 — 최신이 이긴다
+                _source_fetch_row(_T_NEW, "naver", "ok", 7),
+            ]
+        )
+        s.commit()
+    with db() as s:
+        health = load_source_health(s, _BRIEF_DATE)
+    assert health is not None
+    assert health.incomplete is True
+    assert health.ran_at == _T_NEW  # 마지막 수집 시각
+    names = {src.name: src for src in health.sources}
+    assert set(names) == {"rss", "naver"}
+    assert names["rss"].status == "ok" and names["rss"].attempted == 5
+
+
+def test_load_source_health_fallback_ignores_out_of_window(db: sessionmaker) -> None:
+    """KST 종일 윈도우 밖 source_fetch만 있으면 기존대로 None(패널 숨김)."""
+    with db() as s:
+        # 6/21 KST 윈도우는 [6/20 15:00, 6/21 15:00) UTC — 15:00 UTC는 KST로 이미 6/22.
+        s.add(_source_fetch_row(datetime(2026, 6, 21, 16, tzinfo=timezone.utc), "rss", "ok", 3))
+        s.commit()
+    with db() as s:
+        assert load_source_health(s, _BRIEF_DATE) is None
 
 
 # --------------------------------------------------------------------------- GET / 통합
@@ -176,3 +217,36 @@ def test_dashboard_chat_form_has_scope_toggle(monkeypatch: pytest.MonkeyPatch) -
     assert 'value="date"' in body
     assert 'value="cumulative"' in body
     assert "이 날짜" in body and "전체 누적" in body
+
+
+def test_dashboard_cumulative_radio_disabled_without_embedder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """임베더 없는 서버(Fly 이미지)는 누적 라디오가 disabled + 툴팁으로 렌더된다."""
+    monkeypatch.setattr("app.main.settings.anthropic_api_key", "test-key")
+    monkeypatch.setattr("app.main._rag_available", lambda: False)
+    body = client.get("/?date=2099-01-01", auth=DASHBOARD_AUTH).text
+    assert 'value="cumulative" disabled' in body
+    assert "임베딩 모델이 설치되지 않아" in body
+
+
+def test_dashboard_cumulative_radio_enabled_with_embedder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.main.settings.anthropic_api_key", "test-key")
+    monkeypatch.setattr("app.main._rag_available", lambda: True)
+    body = client.get("/?date=2099-01-01", auth=DASHBOARD_AUTH).text
+    assert 'value="cumulative"' in body
+    assert 'value="cumulative" disabled' not in body
+
+
+def test_dashboard_renders_incomplete_run_banner(db: sessionmaker) -> None:
+    """daily_run 없이 source_fetch만 있는 날 — 소스 칩 + '실행 미완료' 배너 렌더."""
+    with db() as s:
+        s.add(_source_fetch_row(_T_NEW, "rss", "ok", 5))
+        s.commit()
+    resp = client.get(f"/?date={_BRIEF_DATE.isoformat()}", auth=DASHBOARD_AUTH)
+    assert resp.status_code == 200
+    body = resp.text
+    assert "일일 실행 미완료" in body
+    assert "rss" in body

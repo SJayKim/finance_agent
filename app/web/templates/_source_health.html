@@ -1,5 +1,8 @@
 {% if health %}
 <section class="source-health">
+  {% if health.incomplete %}
+  <p class="src-warn">⚠️ 일일 실행 미완료 — 수집 후 파이프라인이 끝나지 않았습니다 (마지막 수집 {{ health.ran_at.strftime("%Y-%m-%d %H:%M") }})</p>
+  {% endif %}
   <ul class="source-chips">
     {% for s in health.sources %}
     <li class="chip {{ 'ok' if s.status == 'ok' else 'error' }}">
@@ -8,6 +11,8 @@
     </li>
     {% endfor %}
   </ul>
+  {% if not health.incomplete %}
   <p class="source-meta">다이제스트 {{ health.digest_status }} · 실행 {{ health.ran_at.strftime("%Y-%m-%d %H:%M") }}</p>
+  {% endif %}
 </section>
 {% endif %}

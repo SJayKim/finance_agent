@@ -11,7 +11,7 @@
   </ul>
 </div>
 {% elif disabled %}
-<p class="chat-disabled">채팅 비활성 (ANTHROPIC_API_KEY 미설정)</p>
+<p class="chat-disabled">{{ disabled_msg or "채팅 비활성 (ANTHROPIC_API_KEY 미설정)" }}</p>
 {% else %}
 <p class="no-evidence">관련 근거 없음</p>
 {% endif %}

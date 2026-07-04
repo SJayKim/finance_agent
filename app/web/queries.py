@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
@@ -24,6 +24,8 @@ from app.models import (
     DigestSource,
     RawDocument,
 )
+
+_KST = timezone(timedelta(hours=9))  # brief_date는 KST 기준일(run_daily·main.py와 동일)
 
 
 @dataclass(frozen=True)
@@ -338,17 +340,67 @@ class SourceStatus:
 
 @dataclass(frozen=True)
 class SourceHealthView:
-    """가장 최근 daily_run의 소스 헬스 + 다이제스트 상태 + 실행 시각 (§4 트랙 B / §8.6)."""
+    """가장 최근 daily_run의 소스 헬스 + 다이제스트 상태 + 실행 시각 (§4 트랙 B / §8.6).
+
+    incomplete=True면 daily_run 요약이 없어 source_fetch 행들로 조립한 fallback —
+    수집은 됐지만 일일 실행이 완주하지 못한 날(timeout 등). 템플릿이 배너로 표기한다.
+    """
 
     sources: list[SourceStatus]
     digest_status: str
     ran_at: datetime
+    incomplete: bool = False
+
+
+def _fallback_source_health(session: Session, brief_date: date) -> SourceHealthView | None:
+    """daily_run 요약이 없는 날의 fallback: KST 종일 윈도우 내 source_fetch 행들을 병합.
+
+    daily_run 행은 실행 '완주' 시에만 남는다 — timeout으로 죽은 날은 소스 패널이 통째로
+    사라져 "실행 미완료"를 알 수 없었다(2026-07-04). 소스별 audit은 수집 직후 별도 커밋이라
+    남아 있으므로 이름별 최신 행으로 병합해 incomplete=True로 보인다. 0건이면 None.
+    """
+    start_utc = datetime(brief_date.year, brief_date.month, brief_date.day, tzinfo=_KST).astimezone(
+        timezone.utc
+    )
+    rows = (
+        session.execute(
+            select(AuditLog)
+            .where(
+                AuditLog.action == "source_fetch",
+                AuditLog.ts >= start_utc,
+                AuditLog.ts < start_utc + timedelta(days=1),
+            )
+            .order_by(AuditLog.ts)
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+
+    latest_by_name: dict[str, SourceStatus] = {}
+    for row in rows:  # ts 오름차순 — 같은 이름은 마지막(최신) 행이 남는다
+        payload = row.payload or {}
+        name = payload.get("name", "")
+        latest_by_name[name] = SourceStatus(
+            name=name,
+            status=payload.get("status", ""),
+            attempted=payload.get("attempted", 0),
+            error=payload.get("error"),
+        )
+    return SourceHealthView(
+        sources=list(latest_by_name.values()),
+        digest_status="",
+        ran_at=rows[-1].ts,  # 마지막 수집 시각
+        incomplete=True,
+    )
 
 
 def load_source_health(session: Session, brief_date: date) -> SourceHealthView | None:
     """해당 brief_date의 가장 최근 daily_run audit_log 1건을 소스 헬스 뷰로 파싱 (§8.6).
 
-    payload->>'brief_date' == brief_date.isoformat()인 행 중 ts 내림차순 최신 1건. 없으면 None.
+    payload->>'brief_date' == brief_date.isoformat()인 행 중 ts 내림차순 최신 1건.
+    없으면(실행이 완주 못 한 날) source_fetch 행 fallback, 그것도 없으면 None.
     """
     row = session.execute(
         select(AuditLog)
@@ -360,7 +412,7 @@ def load_source_health(session: Session, brief_date: date) -> SourceHealthView |
         .limit(1)
     ).scalar_one_or_none()
     if row is None:
-        return None
+        return _fallback_source_health(session, brief_date)
 
     payload = row.payload or {}
     sources = [

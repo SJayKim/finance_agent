@@ -11,10 +11,11 @@ normalize → dedup(SimHash→임베딩 cosine) → cluster → ticker-link(Open
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -37,10 +38,13 @@ from app.pipeline.citations import (
 )
 from app.pipeline.dedup import near_duplicate_groups
 from app.pipeline.embed import embed_documents
-from app.pipeline.ticker_link import openfigi_normalizer, resolve
+from app.pipeline.openfigi import make_client
+from app.pipeline.ticker_link import cached_openfigi_normalizer, resolve
 
 
 _PIPELINE_LOCK_KEY = 1_958_374_620  # arbitrary stable bigint for pg_try_advisory_lock
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineAlreadyRunning(RuntimeError):
@@ -206,12 +210,35 @@ def generate_impact(session: Session, brief_date: date) -> None:
     session.flush()
 
 
-def _empty_brief_items(session: Session, brief_date: date) -> list[BriefItem]:
-    """이 brief_date의 아직 분석 안 된 brief_item (status=empty). 멱등 재시도용."""
-    rows = session.execute(
-        select(BriefItem).where(BriefItem.brief_date == brief_date, BriefItem.status == "empty")
-    ).scalars()
-    return list(rows)
+def _empty_brief_items(
+    session: Session, brief_date: date, limit: int | None = None
+) -> list[BriefItem]:
+    """이 brief_date의 아직 분석 안 된 brief_item (status=empty). 멱등 재시도용.
+
+    분석 상한(limit)이 걸릴 때 가치 높은 것부터 소진하도록 정렬한다: 클러스터 멤버 수
+    DESC(멀티소스 이벤트 우선) → 대표문서 published_at DESC(최신 우선) → id. Postgres의
+    DESC 기본이 NULLS FIRST라 nulls_last()가 없으면 발행일 NULL 문서가 최우선이 되는 역전.
+    """
+    member_counts = (
+        select(ClusterMember.cluster_id, func.count().label("member_count"))
+        .group_by(ClusterMember.cluster_id)
+        .subquery()
+    )
+    stmt = (
+        select(BriefItem)
+        .outerjoin(member_counts, member_counts.c.cluster_id == BriefItem.cluster_id)
+        .outerjoin(Cluster, Cluster.id == BriefItem.cluster_id)
+        .outerjoin(RawDocument, RawDocument.id == Cluster.representative_doc_id)
+        .where(BriefItem.brief_date == brief_date, BriefItem.status == "empty")
+        .order_by(
+            member_counts.c.member_count.desc().nulls_last(),
+            RawDocument.published_at.desc().nulls_last(),
+            BriefItem.id,
+        )
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(session.execute(stmt).scalars())
 
 
 def _cluster_source_docs(session: Session, cluster_id: int) -> list[SourceDoc]:
@@ -227,7 +254,48 @@ def _cluster_source_docs(session: Session, cluster_id: int) -> list[SourceDoc]:
     ]
 
 
-def analyze_impact(session: Session, brief_date: date, analyzer: ImpactAnalyzer | None) -> None:
+def _analyze_item(session: Session, item: BriefItem, analyzer: ImpactAnalyzer) -> None:
+    """brief_item 1건 분석·적재 (analyze_impact 루프 본문).
+
+    루프에서 함수로 뽑은 이유: 본문의 조기 반환(continue)이 호출자의 checkpoint/진행 로그를
+    건너뛰지 않게. 상태 전이는 analyze_impact docstring 참조.
+    """
+    if item.cluster_id is None:
+        return
+    result = analyzer(_cluster_source_docs(session, item.cluster_id))
+    if result is None:
+        item.status = "degraded"
+        return
+    if not result.citations:
+        return  # 근거 없음 → empty 유지
+    item.event_type = result.event_type
+    item.direction = result.direction
+    item.confidence = result.confidence
+    item.impact_score = result.impact_score
+    item.analysis_text = result.analysis_text
+    item.status = "ok"
+    session.add_all(
+        Citation(
+            brief_item_id=item.id,
+            raw_document_id=span.raw_document_id,
+            cited_text=span.cited_text,
+            char_start=span.char_start,
+            char_end=span.char_end,
+            source_published_at=span.source_published_at,
+        )
+        for span in result.citations
+    )
+
+
+def analyze_impact(
+    session: Session,
+    brief_date: date,
+    analyzer: ImpactAnalyzer | None,
+    *,
+    max_clusters: int | None = None,
+    checkpoint: Callable[[], None] | None = None,
+    checkpoint_every: int = 10,
+) -> None:
     """§7 2-패스 Citations 분석으로 status=empty brief_item을 채운다.
 
     analyzer가 None이면 비활성(골격만 유지 — 키 없거나 오프라인). 클러스터 소스 문서를 모아
@@ -237,35 +305,22 @@ def analyze_impact(session: Session, brief_date: date, analyzer: ImpactAnalyzer 
     - citations 0(근거 없음) → status=empty 유지 (§10: 분석 텍스트를 환각으로 채우지 않는다).
     멱등: ok/degraded는 다음 실행에서 건너뛰고 남은 empty만 재시도한다. 영향 종목은 LLM이
     아니라 ticker_link(§6.4)가 결정하므로 여기서 brief_item_tickers는 건드리지 않는다.
+
+    max_clusters: 클러스터당 외부 LLM을 부르는 이 루프의 상한(수집량 선형 폭주 → Actions
+    timeout 방지, 2026-07-04). 상한 밖 아이템은 손대지 않음 → status=empty 유지(멱등 재시도
+    계약 그대로 — 다음 실행이 우선순위 순으로 이어서 분석한다).
+    checkpoint: 매 checkpoint_every건마다 호출(호출자가 session.commit 주입) — 실행이 도중에
+    강제 종료돼도 그때까지의 분석·LLM 비용이 살아남는다.
     """
     if analyzer is None:
         return
-    for item in _empty_brief_items(session, brief_date):
-        if item.cluster_id is None:
-            continue
-        result = analyzer(_cluster_source_docs(session, item.cluster_id))
-        if result is None:
-            item.status = "degraded"
-            continue
-        if not result.citations:
-            continue  # 근거 없음 → empty 유지
-        item.event_type = result.event_type
-        item.direction = result.direction
-        item.confidence = result.confidence
-        item.impact_score = result.impact_score
-        item.analysis_text = result.analysis_text
-        item.status = "ok"
-        session.add_all(
-            Citation(
-                brief_item_id=item.id,
-                raw_document_id=span.raw_document_id,
-                cited_text=span.cited_text,
-                char_start=span.char_start,
-                char_end=span.char_end,
-                source_published_at=span.source_published_at,
-            )
-            for span in result.citations
-        )
+    items = _empty_brief_items(session, brief_date, limit=max_clusters)
+    for n, item in enumerate(items, start=1):
+        _analyze_item(session, item, analyzer)
+        if checkpoint is not None and n % checkpoint_every == 0:
+            checkpoint()
+        if n % 25 == 0:
+            logger.info("analyze_impact progress: %d/%d", n, len(items))
 
 
 def run_pipeline(
@@ -274,6 +329,7 @@ def run_pipeline(
     freshness_window_hours: int = settings.freshness_window_hours,
     analyzer: ImpactAnalyzer | None = None,
     embedder: Embedder | None = None,
+    impact_max_clusters: int | None = settings.impact_analyze_max_clusters,
 ) -> None:
     """일간 브리프 파이프라인 1회 실행: dedup → cluster → generate_impact(골격) → analyze_impact(§7) → ticker_link → embed.
 
@@ -288,6 +344,8 @@ def run_pipeline(
     embedder는 analyzer와 달리 자동 생성하지 않는다 — 실 모델(~2GB)이 /trigger·테스트에서
     로드되지 않게. 일일 오케스트레이터가 get_embedder()로 명시 주입할 때만 embed 단계가
     돈다(None이면 no-op). embed는 영향도 분석에 의존하지 않으므로 마지막에 둔다.
+    impact_max_clusters는 analyze_impact 상한(None=무상한). 기본은 설정값 —
+    IMPACT_ANALYZE_MAX_CLUSTERS env로 오버라이드 가능(백필 시 상향).
     """
     if analyzer is None and settings.anthropic_api_key:
         analyzer = anthropic_analyzer(
@@ -307,15 +365,52 @@ def run_pipeline(
                 f"run_pipeline already running (lock {_PIPELINE_LOCK_KEY})"
             )
         try:
+            # 점진 커밋(비원자화) 안전 근거: 락은 위 전용 lock_conn에 있어 세션 커밋과 무관하게
+            # 유지되고, 각 단계의 멱등 필터(not_in 서브쿼리 — 클러스터 멤버·brief_item·티커·
+            # status=empty)가 부분 커밋 상태의 재실행 중복 적재를 이미 막는다. "커밋은 호출자"
+            # 규약은 checkpoint 주입으로 유지(단계 함수는 계속 flush만). 단일 트랜잭션이던
+            # 시절엔 Actions timeout 강제 종료가 76분치 분석을 전량 롤백시켰다(2026-07-04).
             with SessionLocal() as session:
+                logger.info("run_pipeline start: brief_date=%s", brief_date)
                 dedup(session, brief_date, freshness_window_hours)
                 cluster(session, brief_date, freshness_window_hours)
                 generate_impact(session, brief_date)
-                analyze_impact(session, brief_date, analyzer)
+                session.commit()  # 골격 커밋 — 이후 단계가 죽어도 clusters/brief_items는 남는다
+                clusters_n = session.execute(
+                    select(func.count())
+                    .select_from(Cluster)
+                    .where(Cluster.brief_date == brief_date)
+                ).scalar_one()
+                empty_n = session.execute(
+                    select(func.count())
+                    .select_from(BriefItem)
+                    .where(BriefItem.brief_date == brief_date, BriefItem.status == "empty")
+                ).scalar_one()
+                logger.info(
+                    "skeleton committed: clusters=%d unanalyzed=%d cap=%s",
+                    clusters_n,
+                    empty_n,
+                    impact_max_clusters,
+                )
+                analyze_impact(
+                    session,
+                    brief_date,
+                    analyzer,
+                    max_clusters=impact_max_clusters,
+                    checkpoint=session.commit,
+                )
+                session.commit()
+                logger.info("analyze_impact done")
                 aliases = dictionary if dictionary is not None else load_aliases(session)
-                ticker_link(session, brief_date, aliases, openfigi_normalizer)
+                logger.info("ticker_link start: aliases=%d", len(aliases))
+                with make_client() as figi_client:
+                    ticker_link(
+                        session, brief_date, aliases, cached_openfigi_normalizer(figi_client)
+                    )
+                logger.info("ticker_link done — embed start")
                 embed_documents(session, embedder)  # embedder 미주입 시 no-op(모델 미로드)
                 session.commit()
+                logger.info("run_pipeline done: brief_date=%s", brief_date)
         finally:
             lock_conn.execute(
                 text("SELECT pg_advisory_unlock(:key)"), {"key": _PIPELINE_LOCK_KEY}

@@ -310,6 +310,13 @@ a {
   margin-left: var(--sp-1);
 }
 
+.src-warn {
+  color: var(--down);
+  font-family: var(--font-mono);
+  font-size: var(--fs-1);
+  margin: 0 0 var(--sp-3);
+}
+
 .source-meta {
   color: var(--text-3);
   font-family: var(--font-mono);
