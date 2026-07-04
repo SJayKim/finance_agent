@@ -1,5 +1,8 @@
 """특정일 파이프라인만 재실행(신규 수집 없음) — timeout으로 죽은 날 백필용.
 
+실행: uv run python -m scripts.run_pipeline_for --date YYYY-MM-DD
+(파일 경로 실행은 프로젝트 루트가 sys.path에 없어 ModuleNotFoundError: app — -m 필수.)
+
 build_digest_for.py의 거울: 이미 수집된 raw_documents로 dedup→cluster→분석→ticker_link→
 embed를 돌린다. 상한(IMPACT_ANALYZE_MAX_CLUSTERS) 초과분은 같은 명령 재실행이 멱등하게
 이어서 분석한다. 여러 날짜를 백필할 땐 반드시 최신 날짜부터 내림차순으로 — _candidate_docs의
