@@ -15,6 +15,7 @@ dependencies = [
     "pydantic-settings",
     "httpx",
     "anthropic",
+    "openai",
     "truststore>=0.10.4",
     "markdown>=3.10.2",
 ]

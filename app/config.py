@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # status=empty 유지(골격만). impact_model은 설계 §7 고정값(claude-opus-4-8).
     anthropic_api_key: str | None = None
     impact_model: str = "claude-opus-4-8"
+    # OpenAI 비교 실험용(scripts/compare_providers.py) — 운영 경로는 사용 안 함.
+    openai_api_key: str | None = None
     # 분석 루프 상한: 클러스터당 Opus 2-패스 ~8초 실측 × 150 ≈ 20분. 무상한 루프가 수집량
     # 증가(일 ~1,000건)에 선형 폭주해 Actions timeout → 전량 롤백된 사고 방지(2026-07-04).
     # 상한 밖은 status=empty로 남아 다음 실행이 이어서 분석. env로 오버라이드 가능(백필용).
