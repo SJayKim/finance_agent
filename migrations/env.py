@@ -9,7 +9,9 @@ from app.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers 기본 True는 이미 임포트된 app.* 모듈 로거를 전부 disable시켜,
+    # 같은 프로세스에서 alembic 실행 후의 로그(및 pytest caplog)를 조용히 삼킨다.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
