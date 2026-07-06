@@ -12,7 +12,7 @@ __pycache__/
 .gstack/
 
 # 프로바이더 A/B 비교 실험 산출물(scripts.compare_providers --dump-dir) — 결과는 docs/plans/08에 반영됨
-out_compare/
+out_compare*/
 out_smoke/
 compare_*.log
 
