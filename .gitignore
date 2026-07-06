@@ -11,6 +11,11 @@ __pycache__/
 .env
 .gstack/
 
+# 프로바이더 A/B 비교 실험 산출물(scripts.compare_providers --dump-dir) — 결과는 docs/plans/08에 반영됨
+out_compare/
+out_smoke/
+compare_*.log
+
 # 일일 실행 로그(run_daily append 대상) — 디렉터리는 .gitkeep으로 보존, 내용만 제외.
 # 주의: `logs/`(디렉터리)로 막으면 `!logs/.gitkeep` 부정이 안 먹는다(부모 디렉터리가
 # 제외되면 하위 파일을 되살릴 수 없음). 내용만 막는 `logs/*`라야 .gitkeep을 추적할 수 있다.
