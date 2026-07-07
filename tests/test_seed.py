@@ -1,4 +1,4 @@
-"""유니버스 시딩 단위·통합 테스트 (docs/plans/01).
+"""유니버스 시딩 단위·통합 테스트.
 
 seed_aliases: 세 시더를 소스 격리로 호출(한 소스 실패가 나머지를 막지 않음). 실제 외부 API를
 치지 않도록 sync 함수를 monkeypatch한다. seed_coverage/seed_universe: 빈 테이블→삽입,

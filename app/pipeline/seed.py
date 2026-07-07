@@ -1,4 +1,4 @@
-"""유니버스 시딩 배선 (docs/plans/01 — blocker 1·2·4).
+"""유니버스 시딩 배선.
 
 핵심 가치: security_aliases가 비면 ticker_link가 영구 0건 → "현 시황에서 영향 큰 종목
 추천"이라는 산출물이 안 나온다. 세 시더(sec/opendart/coingecko)는 멱등 sync()로 이미

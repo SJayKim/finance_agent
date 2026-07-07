@@ -1,4 +1,4 @@
-"""특정일 다이제스트만 재생성(신규 수집 없음). docs/plans/05 Step 3.
+"""특정일 다이제스트만 재생성(신규 수집 없음).
 
 build_digest는 그날 status=ok brief_items + citations만 입력으로 본다(수집·클러스터링
 없음) → 과거 날짜를 오염 없이 집계만 한다.

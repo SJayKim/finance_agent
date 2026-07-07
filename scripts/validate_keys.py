@@ -1,4 +1,4 @@
-"""키 유효성 라이브 검증 (docs/plans/05 Step 1).
+"""키 유효성 라이브 검증.
 
 build_default_connectors()로 만든 6개 커넥터를 각각 fetch() 1회 라이브 호출하고
 예외를 분류한다. 적재(upsert)는 하지 않는다 — 키가 살아있는지만 본다.
