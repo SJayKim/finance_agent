@@ -137,6 +137,27 @@ def test_analyzer_single_call_happy_path() -> None:
     assert stats.output_tokens == 50
 
 
+def test_analyzer_without_effort_omits_reasoning_and_keeps_budget() -> None:
+    client, calls = _fake_client([_response(_payload())])
+    assert openai_analyzer(client, "m")([_doc(10, title="BTC tops $100K")]) is not None
+    call = calls[0]
+    assert "reasoning" not in call
+    assert call["max_output_tokens"] == 8192
+
+
+def test_analyzer_with_effort_sends_reasoning_and_raises_budget() -> None:
+    stats = AnalyzerStats()
+    resp = _response(_payload())
+    resp.usage.output_tokens_details = SimpleNamespace(reasoning_tokens=30)
+    client, calls = _fake_client([resp])
+    analyzer = openai_analyzer(client, "m", stats, reasoning_effort="medium")
+    assert analyzer([_doc(10, title="BTC tops $100K")]) is not None
+    call = calls[0]
+    assert call["reasoning"] == {"effort": "medium"}
+    assert call["max_output_tokens"] == 16384
+    assert stats.reasoning_tokens == 30
+
+
 def test_analyzer_all_quotes_dropped_returns_empty_result() -> None:
     stats = AnalyzerStats()
     payload = _payload(citations=[{"doc_index": 0, "quote": "환각 인용"}])

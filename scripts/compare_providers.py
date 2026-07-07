@@ -143,6 +143,9 @@ def main() -> int:
     parser.add_argument("--date", required=True, help="대상 brief_date YYYY-MM-DD")
     parser.add_argument("--max-clusters", type=int, default=150)
     parser.add_argument("--model", default="gpt-5.4-mini", help="OpenAI 모델명")
+    parser.add_argument(
+        "--reasoning-effort", default=None, help="openai reasoning effort (none/low/medium/high)"
+    )
     parser.add_argument("--providers", default="anthropic,openai", help="쉼표 구분, 실행 순서대로")
     parser.add_argument("--dump-dir", default=None, help="아이템별 JSON 덤프 디렉터리")
     parser.add_argument("--force", action="store_true", help="localhost 아닌 DB에도 실행(파괴적)")
@@ -188,7 +191,10 @@ def main() -> int:
         else:
             assert settings.openai_api_key
             analyzer = openai_analyzer(
-                build_openai_client(settings.openai_api_key), args.model, stats
+                build_openai_client(settings.openai_api_key),
+                args.model,
+                stats,
+                reasoning_effort=args.reasoning_effort,
             )
         started = time.monotonic()
         analyze_impact(
@@ -208,6 +214,7 @@ def main() -> int:
                 round(stats.quotes_dropped / returned, 3) if returned else None
             )
             snap["tokens_in/out"] = f"{stats.input_tokens}/{stats.output_tokens}"
+            snap["reasoning_tokens"] = stats.reasoning_tokens
             snap["cost_usd"] = round(
                 stats.input_tokens * _OPENAI_USD_PER_M_INPUT / 1_000_000
                 + stats.output_tokens * _OPENAI_USD_PER_M_OUTPUT / 1_000_000,

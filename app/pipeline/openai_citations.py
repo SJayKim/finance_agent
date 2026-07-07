@@ -94,6 +94,7 @@ class AnalyzerStats:
     quotes_dropped: int = 0  # substring 검증 탈락(환각 인용)
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0  # effort 적용 증거 + 비용 해석 근거(output_tokens에 포함)
 
 
 def _docs_prompt(docs: Sequence[SourceDoc]) -> str:
@@ -156,11 +157,17 @@ def build_openai_client(api_key: str) -> openai.OpenAI:
 
 
 def openai_analyzer(
-    client: openai.OpenAI, model: str, stats: AnalyzerStats | None = None
+    client: openai.OpenAI,
+    model: str,
+    stats: AnalyzerStats | None = None,
+    reasoning_effort: str | None = None,
 ) -> ImpactAnalyzer:
     """실 OpenAI 단일 콜 분석기. 계약은 anthropic_analyzer와 동일:
     인용 가능 문서 0 → None(콜 없이), 검증 인용 0 → 빈 ImpactResult(empty 유지),
     API 장애·JSON 잘림 → None(호출자 → status=degraded).
+
+    reasoning_effort 설정 시 reasoning 토큰이 max_output_tokens를 소모하므로 예산을
+    16384로 상향한다 — 안 하면 JSON이 잘려 degraded 폭증(LLM JSON 잘림 견고화 교훈).
     """
 
     def analyze(docs: Sequence[SourceDoc]) -> ImpactResult | None:
@@ -176,12 +183,16 @@ def openai_analyzer(
                     "schema": _SCHEMA,
                 }
             }
+            extra: dict[str, Any] = {}
+            if reasoning_effort is not None:
+                extra["reasoning"] = {"effort": reasoning_effort}
             resp = client.responses.create(
                 model=model,
-                max_output_tokens=8192,
+                max_output_tokens=16384 if reasoning_effort is not None else 8192,
                 instructions=_SYSTEM,
                 input=_docs_prompt(sent),
                 text=payload,
+                **extra,
             )
             if getattr(resp, "status", None) == "incomplete":
                 logger.warning("openai response incomplete — JSON may be cut")
@@ -194,6 +205,8 @@ def openai_analyzer(
                 usage = getattr(resp, "usage", None)
                 stats.input_tokens += getattr(usage, "input_tokens", 0) or 0
                 stats.output_tokens += getattr(usage, "output_tokens", 0) or 0
+                details = getattr(usage, "output_tokens_details", None)
+                stats.reasoning_tokens += getattr(details, "reasoning_tokens", 0) or 0
             if not citations:
                 # 검증 통과 근거 없음 — 환각으로 채우지 않는다(§10). analysis는 버린다.
                 return ImpactResult("", [], None, None, None)
