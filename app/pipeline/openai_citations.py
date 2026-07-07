@@ -161,6 +161,7 @@ def openai_analyzer(
     model: str,
     stats: AnalyzerStats | None = None,
     reasoning_effort: str | None = None,
+    system: str | None = None,
 ) -> ImpactAnalyzer:
     """실 OpenAI 단일 콜 분석기. 계약은 anthropic_analyzer와 동일:
     인용 가능 문서 0 → None(콜 없이), 검증 인용 0 → 빈 ImpactResult(empty 유지),
@@ -168,7 +169,9 @@ def openai_analyzer(
 
     reasoning_effort 설정 시 reasoning 토큰이 max_output_tokens를 소모하므로 예산을
     16384로 상향한다 — 안 하면 JSON이 잘려 degraded 폭증(LLM JSON 잘림 견고화 교훈).
+    system: 프롬프트 버전 실험용 오버라이드(prompt_versions, 플랜 10) — None이면 현행 상수.
     """
+    sys_prompt = _SYSTEM if system is None else system
 
     def analyze(docs: Sequence[SourceDoc]) -> ImpactResult | None:
         sent = [doc for doc in docs if _document_text(doc)]
@@ -189,7 +192,7 @@ def openai_analyzer(
             resp = client.responses.create(
                 model=model,
                 max_output_tokens=16384 if reasoning_effort is not None else 8192,
-                instructions=_SYSTEM,
+                instructions=sys_prompt,
                 input=_docs_prompt(sent),
                 text=payload,
                 **extra,

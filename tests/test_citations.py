@@ -17,7 +17,9 @@ import httpx
 import pytest
 
 from app.pipeline.citations import (
+    _PASS1_SYSTEM,
     _PASS2_SCHEMA,
+    _PASS2_SYSTEM,
     SourceDoc,
     _build_documents,
     _document_text,
@@ -122,6 +124,43 @@ def test_analyzer_two_pass_happy_path() -> None:
     assert [c.raw_document_id for c in result.citations] == [10]
     assert result.analysis_text == "Bitcoin rally"
     assert len(calls) == 2  # 패스1 + 패스2
+
+
+def test_analyzer_prompt_overrides_reach_both_passes() -> None:
+    """프롬프트 버전 오버라이드(플랜 10)가 실제 API 콜 system에 도달하는지."""
+    pass1 = SimpleNamespace(content=[_text_block("Bitcoin rally", [_cite(0, "tops $100K")])])
+    pass2 = SimpleNamespace(
+        content=[
+            _text_block(
+                '{"event_type": "price_move", "direction": "긍정", '
+                '"confidence": "MED", "impact_score": 88}'
+            )
+        ]
+    )
+    client, calls = _fake_client([pass1, pass2])
+    analyzer = anthropic_analyzer(
+        client, "m", pass1_system="P1 OVERRIDE", pass2_system="P2 OVERRIDE"
+    )
+    assert analyzer([_doc(10, title="BTC tops $100K")]) is not None
+    assert calls[0]["system"] == "P1 OVERRIDE"
+    assert calls[1]["system"] == "P2 OVERRIDE"
+
+
+def test_analyzer_default_prompts_are_production_constants() -> None:
+    """오버라이드 미지정 시 현행 상수 그대로 — 운영 경로 불변 증명."""
+    pass1 = SimpleNamespace(content=[_text_block("Bitcoin rally", [_cite(0, "tops $100K")])])
+    pass2 = SimpleNamespace(
+        content=[
+            _text_block(
+                '{"event_type": "price_move", "direction": "긍정", '
+                '"confidence": "MED", "impact_score": 88}'
+            )
+        ]
+    )
+    client, calls = _fake_client([pass1, pass2])
+    assert anthropic_analyzer(client, "m")([_doc(10, title="BTC tops $100K")]) is not None
+    assert calls[0]["system"] is _PASS1_SYSTEM
+    assert calls[1]["system"] is _PASS2_SYSTEM
 
 
 def test_analyzer_no_citations_skips_pass2() -> None:

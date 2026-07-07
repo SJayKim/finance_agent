@@ -1,7 +1,8 @@
 """Anthropic vs OpenAI 영향도 분석 A/B 비교 — 로컬 dev DB 전용(운영 경로 불변).
 
 실행: uv run python -m scripts.compare_providers --date YYYY-MM-DD
-  [--max-clusters 150] [--model gpt-5.4-mini] [--providers anthropic,openai] [--dump-dir DIR]
+  [--max-clusters 150] [--model gpt-5.4-mini] [--anthropic-model claude-...]
+  [--prompt-version v0] [--include-ids 1009,...] [--providers anthropic,openai] [--dump-dir DIR]
 
 프로바이더별로 해당 날짜 분석 결과를 리셋(citations 삭제 + 분석 컬럼 NULL + status='empty')한
 뒤 analyze_impact를 명시 주입 analyzer로 돌리고 메트릭을 스냅샷한다. 리셋이 파괴적이라
@@ -9,6 +10,11 @@ DATABASE_URL에 localhost가 없으면 거부한다(--force로 해제). 기본 �
 마지막 실행 결과가 DB(대시보드)에 남으므로 최종 상태는 GPT 결과다.
 analyze_impact는 status=empty만 분석하므로 각 실행 전 리셋이 필수다. run_pipeline이 아니라
 analyze_impact 직접 호출인 이유: dedup/cluster 재실행·advisory lock이 불필요.
+
+플랜 10 확장: --prompt-version(prompt_versions 레지스트리), --anthropic-model,
+--include-ids(우선순위 상한 밖 프로브 아이템 강제 분석), 모델별 단가 테이블,
+Anthropic 토큰 집계(스크립트 측 클라이언트 프록시 — 운영 무변경),
+--dump-dir 지정 시 summary.json(args+메트릭) 기록.
 """
 
 import argparse
@@ -20,8 +26,10 @@ import time
 from collections import Counter
 from datetime import date
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
+import anthropic
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -30,11 +38,44 @@ from app.db import SessionLocal
 from app.models import BriefItem, Citation
 from app.pipeline.citations import anthropic_analyzer, build_client
 from app.pipeline.openai_citations import AnalyzerStats, build_openai_client, openai_analyzer
-from app.pipeline.pipeline import analyze_impact
+from app.pipeline.pipeline import _analyze_item, analyze_impact
+from app.pipeline.prompt_versions import anthropic_prompts, openai_prompts
 
-# gpt-5.4-mini 단가(USD / 1M tokens). 다른 --model을 쓰면 비용 표기는 참고치일 뿐이다.
-_OPENAI_USD_PER_M_INPUT = 0.75
-_OPENAI_USD_PER_M_OUTPUT = 4.5
+# 단가(USD / 1M tokens, input/output) — 2026-07 기준. 미등록 모델은 cost_usd를 n/a로 표기.
+_OPENAI_PRICING: dict[str, tuple[float, float]] = {
+    "gpt-5.4-mini": (0.75, 4.5),
+    "gpt-5.4": (2.50, 15.0),
+}
+_ANTHROPIC_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+}
+
+
+def _cost_usd(model: str, pricing: dict[str, tuple[float, float]], stats: AnalyzerStats) -> Any:
+    """모델 단가표 기반 비용. 미등록 모델은 'n/a' — 옛 상수처럼 mini 단가를 오적용하지 않는다."""
+    if model not in pricing:
+        return "n/a"
+    usd_in, usd_out = pricing[model]
+    return round(
+        stats.input_tokens * usd_in / 1_000_000 + stats.output_tokens * usd_out / 1_000_000, 4
+    )
+
+
+class _RecordingMessages:
+    """messages.create 프록시 — Anthropic usage 토큰을 AnalyzerStats에 집계(스크립트 전용)."""
+
+    def __init__(self, inner: Any, stats: AnalyzerStats) -> None:
+        self._inner = inner
+        self._stats = stats
+
+    def create(self, **kwargs: Any) -> Any:
+        resp = self._inner.create(**kwargs)
+        usage = getattr(resp, "usage", None)
+        self._stats.calls += 1
+        self._stats.input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self._stats.output_tokens += getattr(usage, "output_tokens", 0) or 0
+        return resp
 
 
 def _reset(session: Session, brief_date: date) -> None:
@@ -144,13 +185,28 @@ def main() -> int:
     parser.add_argument("--max-clusters", type=int, default=150)
     parser.add_argument("--model", default="gpt-5.4-mini", help="OpenAI 모델명")
     parser.add_argument(
+        "--anthropic-model", default=None, help="Anthropic 모델명(기본: settings.impact_model)"
+    )
+    parser.add_argument(
         "--reasoning-effort", default=None, help="openai reasoning effort (none/low/medium/high)"
+    )
+    parser.add_argument(
+        "--prompt-version", default="v0", help="prompt_versions 레지스트리 키(기본 v0=현행)"
+    )
+    parser.add_argument(
+        "--include-ids",
+        default=None,
+        help="쉼표 구분 brief_item id — 우선순위 상한 밖이어도 강제 분석(프로브용)",
     )
     parser.add_argument("--providers", default="anthropic,openai", help="쉼표 구분, 실행 순서대로")
     parser.add_argument("--dump-dir", default=None, help="아이템별 JSON 덤프 디렉터리")
     parser.add_argument("--force", action="store_true", help="localhost 아닌 DB에도 실행(파괴적)")
     args = parser.parse_args()
     brief_date = date.fromisoformat(args.date)
+    include_ids = (
+        [int(x) for x in args.include_ids.split(",") if x.strip()] if args.include_ids else []
+    )
+    anthropic_model = args.anthropic_model or settings.impact_model
 
     if "localhost" not in settings.database_url and not args.force:
         print(f"refusing: DATABASE_URL is not localhost ({settings.database_url.split('@')[-1]})")
@@ -167,6 +223,14 @@ def main() -> int:
             return 1
         if provider not in ("anthropic", "openai"):
             print(f"unknown provider: {provider}")
+            return 1
+        try:  # 버전 미등록은 리셋(파괴적) 전에 거른다
+            if provider == "anthropic":
+                anthropic_prompts(args.prompt_version)
+            else:
+                openai_prompts(args.prompt_version)
+        except KeyError as exc:
+            print(exc.args[0])
             return 1
 
     session = SessionLocal()
@@ -185,8 +249,17 @@ def main() -> int:
         stats = AnalyzerStats()
         if provider == "anthropic":
             assert settings.anthropic_api_key
+            prompts_a = anthropic_prompts(args.prompt_version)
+            real_client = build_client(settings.anthropic_api_key)
+            wrapped = cast(
+                anthropic.Anthropic,
+                SimpleNamespace(messages=_RecordingMessages(real_client.messages, stats)),
+            )
             analyzer = anthropic_analyzer(
-                build_client(settings.anthropic_api_key), settings.impact_model
+                wrapped,
+                anthropic_model,
+                pass1_system=prompts_a.pass1_system,
+                pass2_system=prompts_a.pass2_system,
             )
         else:
             assert settings.openai_api_key
@@ -195,6 +268,7 @@ def main() -> int:
                 args.model,
                 stats,
                 reasoning_effort=args.reasoning_effort,
+                system=openai_prompts(args.prompt_version).system,
             )
         started = time.monotonic()
         analyze_impact(
@@ -205,7 +279,20 @@ def main() -> int:
             checkpoint=session.commit,
         )
         session.commit()
-        snap = _snapshot(session, brief_date)
+        for item_id in include_ids:  # 우선순위 상한 밖 프로브 강제 분석(스크리닝용)
+            item = session.get(BriefItem, item_id)
+            if item is None or item.brief_date != brief_date:
+                print(f"include-id {item_id}: {brief_date} brief_item 아님 — 건너뜀")
+                continue
+            if item.status != "empty":
+                continue  # 상한 안에서 이미 분석됨
+            _analyze_item(session, item, analyzer)
+            session.commit()
+        snap: dict[str, Any] = {
+            "model": anthropic_model if provider == "anthropic" else args.model,
+            "prompt_version": args.prompt_version,
+        }
+        snap.update(_snapshot(session, brief_date))
         snap["elapsed_s"] = round(time.monotonic() - started, 1)
         if provider == "openai":
             # 검증 통과분만 남는 하한값 — drop율 없이 인용 수만 보면 오독한다(플랜 리스크).
@@ -215,14 +302,17 @@ def main() -> int:
             )
             snap["tokens_in/out"] = f"{stats.input_tokens}/{stats.output_tokens}"
             snap["reasoning_tokens"] = stats.reasoning_tokens
-            snap["cost_usd"] = round(
-                stats.input_tokens * _OPENAI_USD_PER_M_INPUT / 1_000_000
-                + stats.output_tokens * _OPENAI_USD_PER_M_OUTPUT / 1_000_000,
-                4,
-            )
+            snap["cost_usd"] = _cost_usd(args.model, _OPENAI_PRICING, stats)
+        else:
+            snap["tokens_in/out"] = f"{stats.input_tokens}/{stats.output_tokens}"
+            snap["cost_usd"] = _cost_usd(anthropic_model, _ANTHROPIC_PRICING, stats)
         results[provider] = snap
         if args.dump_dir:
             _dump(session, brief_date, provider, Path(args.dump_dir))
+            summary = {"args": vars(args), "results": results}
+            (Path(args.dump_dir) / "summary.json").write_text(
+                json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+            )
         print(f"{provider} done in {snap['elapsed_s']}s", flush=True)
 
     _print_table(results)

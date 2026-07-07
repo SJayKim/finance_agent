@@ -19,6 +19,7 @@ import pytest
 
 from app.pipeline.citations import SourceDoc, _document_text
 from app.pipeline.openai_citations import (
+    _SYSTEM,
     AnalyzerStats,
     _docs_prompt,
     openai_analyzer,
@@ -156,6 +157,21 @@ def test_analyzer_with_effort_sends_reasoning_and_raises_budget() -> None:
     assert call["reasoning"] == {"effort": "medium"}
     assert call["max_output_tokens"] == 16384
     assert stats.reasoning_tokens == 30
+
+
+def test_analyzer_system_override_reaches_api_call() -> None:
+    """프롬프트 버전 오버라이드(플랜 10)가 instructions에 도달하는지."""
+    client, calls = _fake_client([_response(_payload())])
+    analyzer = openai_analyzer(client, "m", system="SYS OVERRIDE")
+    assert analyzer([_doc(10, title="BTC tops $100K")]) is not None
+    assert calls[0]["instructions"] == "SYS OVERRIDE"
+
+
+def test_analyzer_default_system_is_production_constant() -> None:
+    """오버라이드 미지정 시 현행 상수 그대로 — 운영 경로 불변 증명."""
+    client, calls = _fake_client([_response(_payload())])
+    assert openai_analyzer(client, "m")([_doc(10, title="BTC tops $100K")]) is not None
+    assert calls[0]["instructions"] is _SYSTEM
 
 
 def test_analyzer_all_quotes_dropped_returns_empty_result() -> None:

@@ -171,8 +171,19 @@ def build_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key, http_client=DefaultHttpxClient(verify=ctx))
 
 
-def anthropic_analyzer(client: anthropic.Anthropic, model: str) -> ImpactAnalyzer:
-    """실 Anthropic 2-패스 분석기. API 장애·쿼터 시 None 반환(호출자 → status=degraded)."""
+def anthropic_analyzer(
+    client: anthropic.Anthropic,
+    model: str,
+    pass1_system: str | None = None,
+    pass2_system: str | None = None,
+) -> ImpactAnalyzer:
+    """실 Anthropic 2-패스 분석기. API 장애·쿼터 시 None 반환(호출자 → status=degraded).
+
+    pass1_system/pass2_system: 프롬프트 버전 실험용 오버라이드(prompt_versions, 플랜 10) —
+    None이면 현행 상수(운영 경로 불변).
+    """
+    p1_system = _PASS1_SYSTEM if pass1_system is None else pass1_system
+    p2_system = _PASS2_SYSTEM if pass2_system is None else pass2_system
 
     def analyze(docs: Sequence[SourceDoc]) -> ImpactResult | None:
         sent = [doc for doc in docs if _document_text(doc)]
@@ -183,7 +194,7 @@ def anthropic_analyzer(client: anthropic.Anthropic, model: str) -> ImpactAnalyze
                 model=model,
                 max_tokens=4096,
                 thinking={"type": "adaptive"},
-                system=_PASS1_SYSTEM,
+                system=p1_system,
                 messages=cast(
                     "list[MessageParam]",
                     [
@@ -204,7 +215,7 @@ def anthropic_analyzer(client: anthropic.Anthropic, model: str) -> ImpactAnalyze
             pass2 = client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=_PASS2_SYSTEM,
+                system=p2_system,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
             )
