@@ -1,7 +1,7 @@
 """§7 일일 다이제스트 단위·통합 테스트.
 
-순수 테스트(no DB): 가짜 Anthropic content 블록으로 디제스터의 2-패스 무결성 경계를
-덮는다(test_citations.py의 가짜 블록 헬퍼 재사용). 실 Anthropic 호출은 없다.
+순수 테스트(no DB): 가짜 content 블록(dict)으로 디제스터의 2-패스 무결성 경계를 덮는다
+(transport가 돌려주는 raw /v1/messages JSON을 흉내). 실 Anthropic 호출은 없다.
 DB 테스트(db 픽스처): build_digest의 빈 날·grounded·멱등·degraded 케이스를 실 Postgres로.
 """
 
@@ -10,15 +10,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
 from typing import Any, cast
 
-import anthropic
-import httpx
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
+from app.llm.gateway import AnthropicMessages, LLMError
 from app.models import BriefItem, Citation, Cluster, DailyDigest, DigestSource, RawDocument, Source
 from app.pipeline.citations import CitedSpan
 from app.pipeline.digest import (
@@ -35,7 +33,7 @@ _BRIEF_DATE = date(2026, 6, 20)
 
 
 # ----------------------------------------------------------------------------
-# 가짜 블록 헬퍼 (test_citations.py와 동형) — SDK 응답을 SimpleNamespace로 흉내.
+# 가짜 블록 헬퍼 (test_citations.py와 동형) — transport의 raw JSON 응답을 dict로 흉내.
 # ----------------------------------------------------------------------------
 def _span(doc_id: int, cited_text: str) -> CitedSpan:
     return CitedSpan(
@@ -57,29 +55,30 @@ def _input(
     )
 
 
-def _cite(document_index: int, cited_text: str, start: int = 0, end: int = 5) -> SimpleNamespace:
-    return SimpleNamespace(
-        type="char_location",
-        document_index=document_index,
-        cited_text=cited_text,
-        start_char_index=start,
-        end_char_index=end,
-    )
+def _cite(document_index: int, cited_text: str, start: int = 0, end: int = 5) -> dict[str, Any]:
+    return {
+        "type": "char_location",
+        "document_index": document_index,
+        "cited_text": cited_text,
+        "start_char_index": start,
+        "end_char_index": end,
+    }
 
 
-def _text_block(text: str, citations: list[SimpleNamespace] | None = None) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text=text, citations=citations)
+def _text_block(text: str, citations: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {"type": "text", "text": text, "citations": citations}
 
 
-def _fake_client(responses: list[Any]) -> tuple[anthropic.Anthropic, list[dict[str, Any]]]:
+def _fake_transport(
+    responses: list[dict[str, Any]],
+) -> tuple[AnthropicMessages, list[dict[str, Any]]]:
     calls: list[dict[str, Any]] = []
 
-    def create(**kwargs: Any) -> Any:
+    def transport(**kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs)
         return responses.pop(0)
 
-    client = SimpleNamespace(messages=SimpleNamespace(create=create))
-    return cast(anthropic.Anthropic, client), calls
+    return transport, calls
 
 
 # ----------------------------------------------------------------------------
@@ -96,31 +95,31 @@ def test_pass2_input_excludes_uncited_text() -> None:
 
 def test_digester_rejects_when_zero_citations() -> None:
     """패스1이 인용 0건이면 디제스터는 [](빈 다이제스트) 반환 — 패스2 호출 안 함."""
-    pass1 = SimpleNamespace(content=[_text_block("ungrounded macro narration", citations=None)])
-    client, calls = _fake_client([pass1])
-    result = anthropic_digester(client, "claude-opus-4-8")([_input(1, ["some evidence"])])
+    pass1 = {"content": [_text_block("ungrounded macro narration", citations=None)]}
+    transport, calls = _fake_transport([pass1])
+    result = anthropic_digester(transport, "claude-opus-4-8")([_input(1, ["some evidence"])])
     assert result == []
     assert len(calls) == 1  # 패스2 미호출
 
 
 def test_digester_maps_document_index_to_brief_item() -> None:
     """document_index → brief_item_id 역추적 + 패스2 섹션에 인용·근거 부착(충실 폴백)."""
-    pass1 = SimpleNamespace(
-        content=[
+    pass1 = {
+        "content": [
             _text_block("Theme A. ", [_cite(0, "evidence from item one")]),
             _text_block("Theme B.", [_cite(1, "evidence from item two")]),
         ]
-    )
-    pass2 = SimpleNamespace(
-        content=[
+    }
+    pass2 = {
+        "content": [
             _text_block(
                 '{"sections": [{"section": "macro", "heading": "금리", '
                 '"body_text": "긍정 요인으로 분류"}]}'
             )
         ]
-    )
-    client, calls = _fake_client([pass1, pass2])
-    sections = anthropic_digester(client, "m")([_input(11, ["a"]), _input(22, ["b"])])
+    }
+    transport, calls = _fake_transport([pass1, pass2])
+    sections = anthropic_digester(transport, "m")([_input(11, ["a"]), _input(22, ["b"])])
     assert sections is not None and len(sections) == 1
     sec = sections[0]
     assert sec.section == "macro"
@@ -134,9 +133,9 @@ def test_digester_maps_document_index_to_brief_item() -> None:
 
 def test_digester_merges_duplicate_section_keys() -> None:
     """같은 section 키(예: 크립토 일색인 날 macro 두 개)는 하나로 합친다 — uq 위반 방지, 첫 heading 유지."""
-    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence one")])])
-    pass2 = SimpleNamespace(
-        content=[
+    pass1 = {"content": [_text_block("Theme.", [_cite(0, "evidence one")])]}
+    pass2 = {
+        "content": [
             _text_block(
                 '{"sections": ['
                 '{"section": "macro", "heading": "금리", "body_text": "첫째 테마"},'
@@ -144,9 +143,9 @@ def test_digester_merges_duplicate_section_keys() -> None:
                 "]}"
             )
         ]
-    )
-    client, _ = _fake_client([pass1, pass2])
-    sections = anthropic_digester(client, "m")([_input(1, ["a"])])
+    }
+    transport, _ = _fake_transport([pass1, pass2])
+    sections = anthropic_digester(transport, "m")([_input(1, ["a"])])
     assert sections is not None and len(sections) == 1
     sec = sections[0]
     assert sec.section == "macro"
@@ -156,20 +155,19 @@ def test_digester_merges_duplicate_section_keys() -> None:
 
 def test_digester_returns_none_on_malformed_json() -> None:
     """패스2 JSON이 잘리거나(토큰 한도) 깨지면 None(degraded) — build_digest를 크래시시키지 않는다."""
-    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence one")])])
+    pass1 = {"content": [_text_block("Theme.", [_cite(0, "evidence one")])]}
     # max_tokens에서 잘린 JSON: 문자열이 닫히지 않음(실측 Unterminated string 회귀).
-    pass2 = SimpleNamespace(content=[_text_block('{"sections": [{"section": "macro", "body_text": "잘린')])
-    client, _ = _fake_client([pass1, pass2])
-    assert anthropic_digester(client, "m")([_input(1, ["a"])]) is None
+    pass2 = {"content": [_text_block('{"sections": [{"section": "macro", "body_text": "잘린')]}
+    transport, _ = _fake_transport([pass1, pass2])
+    assert anthropic_digester(transport, "m")([_input(1, ["a"])]) is None
 
 
 def test_digester_returns_none_on_api_error(caplog: pytest.LogCaptureFixture) -> None:
-    def create(**kwargs: Any) -> Any:
-        raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api"))
+    def transport(**kwargs: Any) -> dict[str, Any]:
+        raise LLMError("APIConnectionError: down")
 
-    client = cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
     with caplog.at_level(logging.WARNING):
-        assert anthropic_digester(client, "m")([_input(1, ["x"])]) is None
+        assert anthropic_digester(transport, "m")([_input(1, ["x"])]) is None
     # 예외 무기록 회귀 방지 — 7/2 digest degraded가 "원인 미상"으로 남았던 진단 공백.
     assert "digester failed" in caplog.text
 
@@ -178,20 +176,20 @@ def test_digester_warns_on_pass2_max_tokens_stop_reason(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """stop_reason=max_tokens면 잘림 경고 로그 — 파싱이 성공해도 진단 단서를 남긴다."""
-    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
-    pass2 = SimpleNamespace(content=[_text_block('{"sections": []}')], stop_reason="max_tokens")
-    client, _ = _fake_client([pass1, pass2])
+    pass1 = {"content": [_text_block("Theme.", [_cite(0, "evidence")])]}
+    pass2 = {"content": [_text_block('{"sections": []}')], "stop_reason": "max_tokens"}
+    transport, _ = _fake_transport([pass1, pass2])
     with caplog.at_level(logging.WARNING):
-        anthropic_digester(client, "m")([_input(1, ["a"])])
+        anthropic_digester(transport, "m")([_input(1, ["a"])])
     assert "truncated" in caplog.text
 
 
 def test_digester_pass2_requests_8192_tokens() -> None:
     """패스2 max_tokens=8192 — 브리프 많은 날 4096 잘림(7/2 degraded) 재발 방지."""
-    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
-    pass2 = SimpleNamespace(content=[_text_block('{"sections": []}')])
-    client, calls = _fake_client([pass1, pass2])
-    anthropic_digester(client, "m")([_input(1, ["a"])])
+    pass1 = {"content": [_text_block("Theme.", [_cite(0, "evidence")])]}
+    pass2 = {"content": [_text_block('{"sections": []}')]}
+    transport, calls = _fake_transport([pass1, pass2])
+    anthropic_digester(transport, "m")([_input(1, ["a"])])
     assert calls[1]["max_tokens"] == 8192
 
 
@@ -201,13 +199,11 @@ def test_digester_returns_none_on_truncated_json() -> None:
     회귀: 잘린 JSON의 json.JSONDecodeError(APIError 아님)가 안 잡혀 build_digest→daily_run
     전체가 죽던 버그(2026-06-26 오늘 수집 실행 중단).
     """
-    pass1 = SimpleNamespace(content=[_text_block("Theme.", [_cite(0, "evidence")])])
+    pass1 = {"content": [_text_block("Theme.", [_cite(0, "evidence")])]}
     # 닫히지 않은 문자열 — json.loads가 JSONDecodeError를 던진다(잘린 응답 모사).
-    pass2 = SimpleNamespace(
-        content=[_text_block('{"sections": [{"section": "macro", "heading": "금리 인')]
-    )
-    client, _ = _fake_client([pass1, pass2])
-    assert anthropic_digester(client, "m")([_input(1, ["a"])]) is None
+    pass2 = {"content": [_text_block('{"sections": [{"section": "macro", "heading": "금리 인')]}
+    transport, _ = _fake_transport([pass1, pass2])
+    assert anthropic_digester(transport, "m")([_input(1, ["a"])]) is None
 
 
 # ----------------------------------------------------------------------------

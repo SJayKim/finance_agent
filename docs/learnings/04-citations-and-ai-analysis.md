@@ -49,18 +49,20 @@ flowchart TD
 | `SourceDoc` | 패스 1에 넘기는 클러스터 문서 단위(제목+요약, 본문은 법적 경계로 미포함) |
 | `CitedSpan` | 실제 인용된 텍스트와 원문 문서 ID·문자 범위·발행시각 |
 | `ImpactResult` | 분석문, 인용 목록, `event_type`, `direction`, `confidence`, `impact_score`(0~100, 부호 없음) |
-| `build_client` | truststore로 OS 인증서를 신뢰하는 Anthropic 클라이언트(사내 TLS 대응). 다이제스트·채팅도 재사용 |
+| [`app/llm/gateway.py`](../../app/llm/gateway.py) | 저장소 유일의 litellm import 지점. `anthropic_messages`/`openai_responses` transport 콜러블 + `LLMError` 정규화 + truststore 전역 주입 |
+| [`app/llm/factory.py`](../../app/llm/factory.py) | 용도별(임팩트·다이제스트·챗) provider·model 스위치를 읽어 transport를 분석기에 주입 |
 | [`app/pipeline/pipeline.py`](../../app/pipeline/pipeline.py) | `analyze_impact`가 status=empty 브리프만 골라 분석기를 호출하고 결과를 적재 |
 | [`app/pipeline/digest.py`](../../app/pipeline/digest.py) | 일일 다이제스트도 같은 2-pass 원칙(`anthropic_digester`) — 입력이 그날 ok 브리프의 `cited_text`뿐 |
 | [`app/web/chat.py`](../../app/web/chat.py) | 날짜별 채팅(`anthropic_chat`)과 누적 RAG 채팅(`anthropic_rag_chat`) — 인용 0이면 답변 거부 |
-| [`app/config.py`](../../app/config.py) | `anthropic_api_key`(없으면 분석 비활성), `impact_model`(기본 `claude-opus-4-8`, 네 흐름이 공유) |
+| [`app/pipeline/openai_digest.py`](../../app/pipeline/openai_digest.py) · [`app/web/openai_chat.py`](../../app/web/openai_chat.py) | OpenAI provider용 quote-and-verify 다이제스트·챗 전략(계약 동일) |
+| [`app/config.py`](../../app/config.py) | provider 키(`anthropic_api_key`/`openai_api_key`), 용도별 provider 스위치(`impact`/`digest`/`chat_provider`, 기본 anthropic), 모델(`impact_model` 기본 `claude-opus-4-8`, digest/chat은 폴백) |
 
 ## Anthropic API를 쓰는 방식
 
 - **패스 1 — Citations API**: user content에 `{"type": "document", "citations": {"enabled": true}}` 블록들을 넣어 호출한다. 블록 순서가 곧 응답의 `document_index`가 되므로, `parse_pass1`이 그 인덱스로 보낸 문서 목록을 역참조해 `raw_document_id`와 발행시각을 붙인다. `thinking={"type": "adaptive"}`로 추론을 켠다.
 - **패스 2 — Structured Outputs**: `output_config={"format": {"type": "json_schema", "schema": ...}}`로 JSON 스키마를 강제한다. Citations와 Structured Outputs는 **한 콜에서 동시 사용 불가(400)** 라서 2-pass로 분리했다.
 - **무결성 규칙**: 패스 2 입력은 패스 1 분석문 + 실제 인용된 `cited_text` 목록뿐이다(`_pass2_input`). 원문 문서를 다시 주지 않으므로 인용 범위 밖의 새 사실·수치가 끼어들 수 없다.
-- **실패 처리**: `anthropic.APIError`는 None 반환 → 호출자가 `status="degraded"`로 기록. 다이제스트는 `json.JSONDecodeError`(패스 2 JSON 잘림)도 degraded로 처리한다.
+- **실패 처리**: gateway가 provider 예외(연결·타임아웃·쿼터·장애)를 `LLMError`로 정규화 → 분석기가 None 반환 → 호출자가 `status="degraded"`로 기록. 다이제스트는 `json.JSONDecodeError`(패스 2 JSON 잘림)도 degraded로 처리한다.
 
 ## 영향 분석, 다이제스트, 채팅의 공통 원칙
 
@@ -88,8 +90,8 @@ flowchart TD
 - **2-pass 분리**: Anthropic API가 Citations와 Structured Outputs를 한 콜에서 허용하지 않는다(400). 어차피 분리해야 한다면, 패스 2 입력을 "이미 인용으로 검증된 범위"로 좁혀 zero-fabrication 무결성 규칙을 공짜로 얻는다.
 - **impact_score 스키마에 minimum/maximum이 없는 이유**: Anthropic structured output은 integer의 `minimum`/`maximum`을 지원하지 않아 넣으면 400이 난다. 실측에서는 이 400을 `except APIError`가 조용히 삼켜 점수가 전부 NULL로 저장되는 사고가 있었다. 그래서 범위(0~100)는 `_PASS2_SYSTEM` 프롬프트로 지시하고, 스키마에 bounds가 다시 들어가지 않도록 테스트로 고정했다.
 - **LLM JSON을 신뢰하지 않는다**: 브리프가 많은 날 패스 2 JSON이 max_tokens에 잘려 `json.JSONDecodeError`(APIError가 아님)가 났다. 다이제스트는 max_tokens를 4096으로 올리고, 파싱 실패는 degraded로 강등해 daily_run 전체를 죽이지 않는다. 또 모델이 같은 section 키를 여러 번 돌려줘 unique 제약(`uq_daily_digests_date_section`)을 위반할 수 있어 적재 전에 키별로 병합한다.
-- **truststore 클라이언트**: 사내 TLS 가로채기 환경에서 기본 인증서 검증이 `CERTIFICATE_VERIFY_FAILED`로 죽는다. `build_client`가 `truststore.SSLContext`를 주입한 httpx 클라이언트로 Anthropic을 만들고, 다이제스트·채팅·RAG가 모두 이 하나를 재사용한다.
-- **순수/I-O 분리**: `parse_pass1`·`_parse_chat` 같은 파싱은 네트워크·DB 없이 더미 객체로 테스트한다. SDK 타입에 묶이지 않게 `getattr`로 방어적으로 접근한다.
+- **LLM 게이트웨이(litellm)**: 모든 provider 호출은 `app/llm/gateway.py`의 transport 콜러블 하나를 거친다 — provider/모델 교체를 `.env`(용도별 스위치) + 재시작으로 끝낸다. litellm의 `ssl_verify` 미적용 버그(#14396) 때문에 사내 TLS 대응은 게이트웨이가 `truststore.inject_into_ssl()`을 프로세스당 1회 전역 주입한다(기존 "스코프 좁게" 관례의 강제된 예외).
+- **순수/I-O 분리**: `parse_pass1`·`_parse_chat` 같은 파싱은 네트워크·DB 없이 dict 리터럴로 테스트한다. transport가 raw `/v1/messages` JSON(dict)을 돌려주므로 파서는 `.get()`으로 접근한다.
 - **티커는 LLM이 아닌 사전이 결정**: 유니버스(어떤 종목을 다루는지)는 설정·DB 상태의 경계이지 모델 출력이 아니다. LLM이 임의 종목을 "발명"하는 것을 구조적으로 차단한다.
 
 ## 관련 테스트

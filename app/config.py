@@ -23,8 +23,17 @@ class Settings(BaseSettings):
     # status=empty 유지(골격만). impact_model은 설계 §7 고정값(claude-opus-4-8).
     anthropic_api_key: str | None = None
     impact_model: str = "claude-opus-4-8"
-    # OpenAI 비교 실험용(scripts/compare_providers.py) — 운영 경로는 사용 안 함.
+    # OpenAI provider 키(플랜 11 게이트웨이). openai 용도 스위치가 켜졌을 때 사용.
     openai_api_key: str | None = None
+
+    # LLM 게이트웨이 용도별 provider 스위치 (플랜 11). 기본값 조합 = 현행 동작(전부 anthropic,
+    # 모델은 impact_model 폴백). provider별 키(anthropic_api_key/openai_api_key) 없으면 해당
+    # 용도는 비활성(None) — 현행 키 게이트 의미 유지. .env + 재시작으로 전환.
+    impact_provider: str = "anthropic"
+    digest_provider: str = "anthropic"
+    chat_provider: str = "anthropic"  # 날짜 챗 + 누적 RAG 챗 공통
+    digest_model: str | None = None  # None → impact_model 폴백
+    chat_model: str | None = None  # None → impact_model 폴백
     # 분석 루프 상한: 클러스터당 Opus 2-패스 ~8초 실측 × 150 ≈ 20분. 무상한 루프가 수집량
     # 증가(일 ~1,000건)에 선형 폭주해 Actions timeout → 전량 롤백된 사고 방지(2026-07-04).
     # 상한 밖은 status=empty로 남아 다음 실행이 이어서 분석. env로 오버라이드 가능(백필용).

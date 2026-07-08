@@ -8,10 +8,9 @@ import argparse
 import sys
 from datetime import date
 
-from app.config import settings
 from app.db import SessionLocal
-from app.pipeline.citations import build_client
-from app.pipeline.digest import anthropic_digester, build_digest
+from app.llm.factory import make_digester
+from app.pipeline.digest import build_digest
 
 
 def main() -> int:
@@ -19,8 +18,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="특정일 다이제스트만 재생성(수집 없음)")
     parser.add_argument("--date", required=True, help="대상 brief_date YYYY-MM-DD")
     brief_date = date.fromisoformat(parser.parse_args().date)
-    assert settings.anthropic_api_key, "ANTHROPIC_API_KEY 미설정"
-    digester = anthropic_digester(build_client(settings.anthropic_api_key), settings.impact_model)
+    digester = make_digester()
+    assert digester is not None, "digest provider 키 미설정 (DIGEST_PROVIDER·해당 키 확인)"
     with SessionLocal() as session:
         build_digest(session, brief_date, digester=digester)
         session.commit()

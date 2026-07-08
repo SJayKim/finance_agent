@@ -25,6 +25,8 @@ os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
 # 미주입 시 키 유무로 실 Anthropic 분석기를 자동 생성한다(라이브 Opus 호출·과금 방지).
 # env가 .env보다 우선하므로 빈 값으로 고정. 키가 필요한 테스트는 monkeypatch로 켠다.
 os.environ["ANTHROPIC_API_KEY"] = ""
+# provider 스위치(플랜 11) 도입 후 openai 용도가 켜져도 라이브 콜이 나가지 않게 빈 값 고정.
+os.environ["OPENAI_API_KEY"] = ""
 os.environ.setdefault("DASHBOARD_USERNAME", "test-dashboard")
 os.environ.setdefault("DASHBOARD_PASSWORD", "test-password")
 DASHBOARD_AUTH = (os.environ["DASHBOARD_USERNAME"], os.environ["DASHBOARD_PASSWORD"])

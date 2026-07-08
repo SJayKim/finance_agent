@@ -30,11 +30,10 @@ from app.models import (
     RawDocument,
     SecurityAlias,
 )
+from app.llm.factory import make_impact_analyzer
 from app.pipeline.citations import (
     ImpactAnalyzer,
     SourceDoc,
-    anthropic_analyzer,
-    build_client,
 )
 from app.pipeline.dedup import near_duplicate_groups
 from app.pipeline.embed import embed_documents
@@ -338,8 +337,8 @@ def run_pipeline(
     event_classify는 구현되는 대로 순서대로 추가한다.
     dictionary 미주입 시 security_aliases 테이블에서 적재(load_aliases, 빈 테이블 → 0건) —
     유니버스를 소스에 담지 않고 DB 상태로 흐르게 한다(§2). 명시 주입(테스트 등)은 그대로 사용.
-    analyzer 미주입 시 settings.anthropic_api_key가 있으면 실 Anthropic 2-패스 분석기를 만들고,
-    없으면 None(analyze_impact 비활성 — brief_item status=empty 유지). 테스트는 가짜 분석기를
+    analyzer 미주입 시 factory.make_impact_analyzer()로 설정된 provider 분석기를 만든다 —
+    키 없으면 None(analyze_impact 비활성 — brief_item status=empty 유지). 테스트는 가짜 분석기를
     주입해 네트워크 없이 적재를 검증한다.
     embedder는 analyzer와 달리 자동 생성하지 않는다 — 실 모델(~2GB)이 /trigger·테스트에서
     로드되지 않게. 일일 오케스트레이터가 get_embedder()로 명시 주입할 때만 embed 단계가
@@ -347,10 +346,8 @@ def run_pipeline(
     impact_max_clusters는 analyze_impact 상한(None=무상한). 기본은 설정값 —
     IMPACT_ANALYZE_MAX_CLUSTERS env로 오버라이드 가능(백필 시 상향).
     """
-    if analyzer is None and settings.anthropic_api_key:
-        analyzer = anthropic_analyzer(
-            build_client(settings.anthropic_api_key), settings.impact_model
-        )
+    if analyzer is None:
+        analyzer = make_impact_analyzer()
     # 어드바이저리 락은 연결(세션) 단위다. 락은 전용 연결(lock_conn)에 고정해 잡고 푼다 —
     # 작업 세션에서 잡고 session.commit() 뒤 finally에서 풀면, 커밋이 연결을 풀에 반납하고
     # 언락이 다른 연결에서 돌아 락이 안 풀린 채 풀에 남는다(누수 → 후속 run_pipeline이

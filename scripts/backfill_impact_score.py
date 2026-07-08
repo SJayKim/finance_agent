@@ -11,10 +11,9 @@ from datetime import date
 
 from sqlalchemy import select
 
-from app.config import settings
 from app.db import SessionLocal
+from app.llm.factory import make_impact_analyzer
 from app.models import BriefItem
-from app.pipeline.citations import anthropic_analyzer, build_client
 from app.pipeline.pipeline import _cluster_source_docs
 
 
@@ -23,8 +22,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="기존 brief_items의 impact_score만 백필")
     parser.add_argument("--date", required=True, help="대상 brief_date YYYY-MM-DD")
     brief_date = date.fromisoformat(parser.parse_args().date)
-    assert settings.anthropic_api_key, "ANTHROPIC_API_KEY 미설정"
-    analyzer = anthropic_analyzer(build_client(settings.anthropic_api_key), settings.impact_model)
+    analyzer = make_impact_analyzer()
+    assert analyzer is not None, "impact provider 키 미설정 (IMPACT_PROVIDER·해당 키 확인)"
     session = SessionLocal()
     items = (
         session.execute(

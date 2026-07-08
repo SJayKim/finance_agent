@@ -5,7 +5,7 @@
 0건이면 거부(None) — LLM 텍스트로 판정하지 않고 인용 유무가 유일 기준이다.
 
 citations.py와 같은 경계: 순수 파싱(_parse_chat)과 I/O(anthropic_chat)를 분리해 네트워크
-없이 테스트한다. 클라이언트는 citations.build_client를 재사용한다(truststore OS 인증서).
+없이 테스트한다. transport(gateway)가 provider 호출·OS 인증서 신뢰를 담당한다.
 영향 분석문(analysis_text)은 LLM 생성물이라 인용 대상으로 두지 않는다 — 1차 근거만 citable.
 """
 
@@ -13,13 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
-import anthropic
-from anthropic.types import MessageParam
 from sqlalchemy.orm import Session
 
 from app.embed import Embedder
+from app.llm.gateway import AnthropicMessages, LLMError
 from app.web.queries import BriefView, CitationView, search_citation_spans
 
 
@@ -90,22 +89,22 @@ def _parse_chat(
 ) -> tuple[str, list[ChatCitation]]:
     """응답 content 블록들 → (답변 텍스트, 인용들) (순수). parse_pass1과 같은 패턴.
 
-    cited 블록의 document_index로 sources를 역참조해 url/title을 붙인다. SDK 타입에 묶이지
-    않게 getattr 방어 접근. 같은 (url, cited_text)는 한 번만(링크 중복 제거).
+    cited 블록의 document_index로 sources를 역참조해 url/title을 붙인다. content는 transport가
+    돌려준 raw /v1/messages JSON의 content 블록(dict)들. 같은 (url, cited_text)는 한 번만.
     """
     texts: list[str] = []
     citations: list[ChatCitation] = []
     seen: set[tuple[str | None, str]] = set()
     for block in content:
-        if getattr(block, "type", None) != "text":
+        if block.get("type") != "text":
             continue
-        texts.append(getattr(block, "text", "") or "")
-        for cite in getattr(block, "citations", None) or []:
-            idx = getattr(cite, "document_index", None)
+        texts.append(block.get("text") or "")
+        for cite in block.get("citations") or []:
+            idx = cite.get("document_index")
             if idx is None or idx < 0 or idx >= len(sources):
                 continue
             src = sources[idx]
-            cited_text = getattr(cite, "cited_text", "") or src.cited_text
+            cited_text = cite.get("cited_text") or src.cited_text
             key = (src.url, cited_text)
             if key in seen:
                 continue
@@ -114,34 +113,34 @@ def _parse_chat(
     return "".join(texts).strip(), citations
 
 
-def anthropic_chat(client: anthropic.Anthropic, model: str) -> ChatAnalyzer:
-    """실 Anthropic 근거기반 채팅 분석기. 인용 0/장애 시 None(라우트 → '관련 근거 없음')."""
+def anthropic_chat(transport: AnthropicMessages, model: str) -> ChatAnalyzer:
+    """실 Anthropic 근거기반 채팅 분석기. 인용 0/장애 시 None(라우트 → '관련 근거 없음').
+
+    transport: gateway.anthropic_messages 콜러블 — raw /v1/messages JSON dict를 돌려준다.
+    """
 
     def answer(question: str, brief_views: Sequence[BriefView]) -> ChatAnswer | None:
         sources = _chat_sources(brief_views)
         if not sources:
             return None  # 그날 근거 자체가 없음
         try:
-            resp = client.messages.create(
+            resp = transport(
                 model=model,
                 max_tokens=1024,
                 system=_CHAT_SYSTEM,
-                messages=cast(
-                    "list[MessageParam]",
-                    [
-                        {
-                            "role": "user",
-                            "content": [
-                                *_chat_documents(sources),
-                                {"type": "text", "text": question},
-                            ],
-                        }
-                    ],
-                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *_chat_documents(sources),
+                            {"type": "text", "text": question},
+                        ],
+                    }
+                ],
             )
-        except anthropic.APIError:
+        except LLMError:
             return None
-        text, citations = _parse_chat(resp.content, sources)
+        text, citations = _parse_chat(resp["content"], sources)
         if not citations:
             return None  # 근거 인용 0 → 거부(§7 정책 일관)
         return ChatAnswer(text=text, citations=citations)
@@ -155,7 +154,7 @@ def _sources_from_citation_views(views: Sequence[CitationView]) -> list[_ChatSou
 
 
 def anthropic_rag_chat(
-    client: anthropic.Anthropic, model: str, embedder: Embedder
+    transport: AnthropicMessages, model: str, embedder: Embedder
 ) -> RagChatAnalyzer:
     """누적 RAG 근거기반 채팅 분석기(§4 트랙 D2). 질문을 임베딩해 전 날짜 인용 코퍼스를 검색해
     고른 cited_text span만 Citations API에 먹인다 — 검색은 무엇을 먹일지만 바꾸고, 신뢰 경계는
@@ -169,26 +168,23 @@ def anthropic_rag_chat(
             return None  # 코퍼스에 임베딩된 인용이 없거나 관련 근거 없음
         sources = _sources_from_citation_views(views)
         try:
-            resp = client.messages.create(
+            resp = transport(
                 model=model,
                 max_tokens=1024,
                 system=_CHAT_SYSTEM,
-                messages=cast(
-                    "list[MessageParam]",
-                    [
-                        {
-                            "role": "user",
-                            "content": [
-                                *_chat_documents(sources),
-                                {"type": "text", "text": question},
-                            ],
-                        }
-                    ],
-                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *_chat_documents(sources),
+                            {"type": "text", "text": question},
+                        ],
+                    }
+                ],
             )
-        except anthropic.APIError:
+        except LLMError:
             return None
-        text, citations = _parse_chat(resp.content, sources)
+        text, citations = _parse_chat(resp["content"], sources)
         if not citations:
             return None  # 근거 인용 0 → 거부(§7 정책 일관, 검색은 무엇을 먹일지만 바꾼다)
         return ChatAnswer(text=text, citations=citations)

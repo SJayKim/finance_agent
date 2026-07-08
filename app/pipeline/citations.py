@@ -12,23 +12,19 @@
 (유니버스는 설정 경계, §2). citations는 패스1에서 나온다.
 
 순수 함수(parse_pass1 등, 네트워크·DB 없이 테스트 가능)와 I/O(anthropic_analyzer)를
-분리한다 — rss.py와 같은 경계. 클라이언트는 truststore로 OS 인증서를 신뢰시킨다(사내 TLS).
+분리한다 — rss.py와 같은 경계. transport(gateway)가 provider 호출·OS 인증서 신뢰를 담당한다.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import ssl
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
-import anthropic
-import truststore
-from anthropic import DefaultHttpxClient
-from anthropic.types import MessageParam
+from app.llm.gateway import AnthropicMessages, LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -126,25 +122,26 @@ def parse_pass1(
 
     cited 블록의 citations 배열에서 document_index로 sent_docs를 역참조해 raw_document_id·
     발행시각을 붙인다. sent_docs는 _build_documents에 넘긴 것과 같은 순서여야 한다(index 매핑).
-    SDK 타입에 묶이지 않게 getattr로 방어적 접근 — 테스트는 더미 객체로 검증.
+    content는 transport가 돌려준 raw /v1/messages JSON의 content 블록(dict)들 — text 아닌
+    블록(thinking 등)은 건너뛴다.
     """
     texts: list[str] = []
     citations: list[CitedSpan] = []
     for block in content:
-        if getattr(block, "type", None) != "text":
+        if block.get("type") != "text":
             continue
-        texts.append(getattr(block, "text", "") or "")
-        for cite in getattr(block, "citations", None) or []:
-            idx = getattr(cite, "document_index", None)
+        texts.append(block.get("text") or "")
+        for cite in block.get("citations") or []:
+            idx = cite.get("document_index")
             if idx is None or idx < 0 or idx >= len(sent_docs):
                 continue
             src = sent_docs[idx]
             citations.append(
                 CitedSpan(
                     raw_document_id=src.raw_document_id,
-                    cited_text=getattr(cite, "cited_text", "") or "",
-                    char_start=getattr(cite, "start_char_index", None),
-                    char_end=getattr(cite, "end_char_index", None),
+                    cited_text=cite.get("cited_text") or "",
+                    char_start=cite.get("start_char_index"),
+                    char_end=cite.get("end_char_index"),
                     source_published_at=src.published_at,
                 )
             )
@@ -160,25 +157,21 @@ def _pass2_input(analysis_text: str, citations: Sequence[CitedSpan]) -> str:
 def _first_text(content: Iterable[Any]) -> str:
     """content 블록들에서 첫 text 블록의 텍스트(없으면 빈 문자열)."""
     for block in content:
-        if getattr(block, "type", None) == "text":
-            return getattr(block, "text", "") or ""
+        if block.get("type") == "text":
+            return block.get("text") or ""
     return ""
 
 
-def build_client(api_key: str) -> anthropic.Anthropic:
-    """OS 인증서 저장소를 신뢰하는 Anthropic 클라이언트(사내 TLS 가로채기 대응; rss.py와 동일 경계)."""
-    ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    return anthropic.Anthropic(api_key=api_key, http_client=DefaultHttpxClient(verify=ctx))
-
-
 def anthropic_analyzer(
-    client: anthropic.Anthropic,
+    transport: AnthropicMessages,
     model: str,
     pass1_system: str | None = None,
     pass2_system: str | None = None,
 ) -> ImpactAnalyzer:
     """실 Anthropic 2-패스 분석기. API 장애·쿼터 시 None 반환(호출자 → status=degraded).
 
+    transport: gateway.anthropic_messages 콜러블 — 현행 client.messages.create와 같은 kwargs를
+    받고 raw /v1/messages JSON dict를 돌려준다.
     pass1_system/pass2_system: 프롬프트 버전 실험용 오버라이드(prompt_versions, 플랜 10) —
     None이면 현행 상수(운영 경로 불변).
     """
@@ -190,36 +183,33 @@ def anthropic_analyzer(
         if not sent:
             return None  # 인용할 본문이 없음
         try:
-            pass1 = client.messages.create(
+            pass1 = transport(
                 model=model,
                 max_tokens=4096,
                 thinking={"type": "adaptive"},
                 system=p1_system,
-                messages=cast(
-                    "list[MessageParam]",
-                    [
-                        {
-                            "role": "user",
-                            "content": [
-                                *_build_documents(sent),
-                                {"type": "text", "text": _PASS1_TASK},
-                            ],
-                        }
-                    ],
-                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *_build_documents(sent),
+                            {"type": "text", "text": _PASS1_TASK},
+                        ],
+                    }
+                ],
             )
-            analysis_text, citations = parse_pass1(pass1.content, sent)
+            analysis_text, citations = parse_pass1(pass1["content"], sent)
             if not citations:
                 # 근거 없음 — 환각으로 채우지 않는다(§10). analysis는 버린다.
                 return ImpactResult("", [], None, None, None)
-            pass2 = client.messages.create(
+            pass2 = transport(
                 model=model,
                 max_tokens=1024,
                 system=p2_system,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
             )
-            data = json.loads(_first_text(pass2.content) or "{}")
+            data = json.loads(_first_text(pass2["content"]) or "{}")
             return ImpactResult(
                 analysis_text=analysis_text,
                 citations=citations,
@@ -228,9 +218,9 @@ def anthropic_analyzer(
                 confidence=data.get("confidence"),
                 impact_score=data.get("impact_score"),
             )
-        except (anthropic.APIError, json.JSONDecodeError) as exc:
-            # APIError: 쿼터 소진·소스 다운·장애. JSONDecodeError: 패스2 JSON 잘림(max_tokens)
-            # — digest.py와 동일하게 클러스터 하나의 실패가 분석 루프 전체를 죽이지 않게 한다.
+        except (LLMError, json.JSONDecodeError) as exc:
+            # LLMError: 쿼터 소진·소스 다운·장애(gateway 정규화). JSONDecodeError: 패스2 JSON
+            # 잘림(max_tokens) — 클러스터 하나의 실패가 분석 루프 전체를 죽이지 않게 한다.
             logger.warning("impact analyzer failed: %s: %s", type(exc).__name__, exc)
             return None  # 쿼터 소진·소스 다운·장애 → degraded
 

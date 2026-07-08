@@ -15,12 +15,16 @@ from fastapi.templating import Jinja2Templates
 from app.config import settings
 from app.db import SessionLocal
 from app.embed import get_embedder
-from app.pipeline.citations import build_client
-from app.pipeline.digest import anthropic_digester
+from app.llm.factory import (
+    chat_key_configured,
+    make_chat_analyzer,
+    make_digester,
+    make_rag_chat_analyzer,
+)
 from app.pipeline.pipeline import PipelineAlreadyRunning, run_pipeline
 from app.pipeline.seed import seed_universe
 from app.runner import DailyRunAlreadyRunning, run_daily
-from app.web.chat import ChatAnalyzer, RagChatAnalyzer, anthropic_chat, anthropic_rag_chat
+from app.web.chat import ChatAnalyzer, RagChatAnalyzer
 from app.web.queries import (
     board_asset_counts,
     dates_with_briefs,
@@ -84,13 +88,15 @@ def _default_date(has_data: set[date], today: date) -> date:
 
 
 def _chat_analyzer() -> ChatAnalyzer | None:
-    """anthropic_api_key 있으면 §7 경계 채팅 분석기, 없으면 None(채팅 비활성). 테스트는 monkeypatch."""
-    if not settings.anthropic_api_key:
-        return None
-    return anthropic_chat(build_client(settings.anthropic_api_key), settings.impact_model)
+    """챗 provider 키 있으면 §7 경계 채팅 분석기, 없으면 None(채팅 비활성). 테스트는 monkeypatch."""
+    return make_chat_analyzer()
 
 
-_NO_KEY_MSG = "채팅 비활성 (ANTHROPIC_API_KEY 미설정)"
+def _no_key_msg() -> str:
+    """챗 비활성 사유 — 설정된 챗 provider 키 이름을 노출(기본 anthropic → 현행 문자열 동일)."""
+    return f"채팅 비활성 ({settings.chat_provider.upper()}_API_KEY 미설정)"
+
+
 _NO_EMBEDDER_MSG = "누적 검색 비활성 — 서버에 임베딩 모델 미설치 ('이 날짜' 범위는 사용 가능)"
 
 
@@ -102,7 +108,7 @@ def _rag_available() -> bool:
     False → 누적 라디오 disabled + 툴팁. 예전엔 키만 봐서 임베더 없는 서버가 원인을
     "키 미설정"으로 오진했다(2026-07-04).
     """
-    if not settings.anthropic_api_key or settings.embedding_model is None:
+    if not chat_key_configured() or settings.embedding_model is None:
         return False
     return importlib.util.find_spec("sentence_transformers") is not None
 
@@ -113,14 +119,12 @@ def _rag_analyzer() -> RagChatAnalyzer | None:
     첫 누적 질의에서 get_embedder()가 bge-m3를 로드한다(이후 lru_cache) — import 시 미리 로드하지
     않는다. 테스트는 monkeypatch.
     """
-    if not settings.anthropic_api_key:
+    if not chat_key_configured():
         return None
     embedder = get_embedder()
     if embedder is None:
         return None
-    return anthropic_rag_chat(
-        build_client(settings.anthropic_api_key), settings.impact_model, embedder
-    )
+    return make_rag_chat_analyzer(embedder)
 
 
 @app.get("/health")
@@ -153,11 +157,7 @@ def run_daily_endpoint() -> dict[str, object]:
     """
     brief_date = datetime.now(_KST).date()
     embedder = get_embedder()
-    digester = (
-        anthropic_digester(build_client(settings.anthropic_api_key), settings.impact_model)
-        if settings.anthropic_api_key
-        else None
-    )
+    digester = make_digester()
     try:
         report = run_daily(
             brief_date, embedder=embedder, digester=digester, seeder=seed_universe
@@ -215,7 +215,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
             "prev_date": (brief_date - timedelta(days=1)).isoformat(),
             "next_date": (brief_date + timedelta(days=1)).isoformat(),
             "last_updated": last_updated,
-            "chat_enabled": bool(settings.anthropic_api_key),
+            "chat_enabled": chat_key_configured(),
             "rag_enabled": _rag_available(),
         },
     )
@@ -242,7 +242,7 @@ def chat(
             # 원인 구분: 키 없음 vs 임베더 없음(Fly 이미지는 의도적으로 임베더 미설치).
             ctx["disabled"] = True
             ctx["disabled_msg"] = (
-                _NO_KEY_MSG if not settings.anthropic_api_key else _NO_EMBEDDER_MSG
+                _no_key_msg() if not chat_key_configured() else _NO_EMBEDDER_MSG
             )
             return templates.TemplateResponse(request, "_chat_answer.html", ctx)
         if question:
@@ -253,7 +253,7 @@ def chat(
     analyzer = _chat_analyzer()
     if analyzer is None:
         ctx["disabled"] = True
-        ctx["disabled_msg"] = _NO_KEY_MSG
+        ctx["disabled_msg"] = _no_key_msg()
         return templates.TemplateResponse(request, "_chat_answer.html", ctx)
     if question:
         brief_date = _parse_date(date)

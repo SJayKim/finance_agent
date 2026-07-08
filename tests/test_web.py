@@ -8,14 +8,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
-import anthropic
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from app.llm.gateway import AnthropicMessages
 from app.main import app
 from app.models import (
     BriefItem,
@@ -186,14 +185,12 @@ def test_board_asset_counts_per_class() -> None:
 # --------------------------------------------------------------------------- 단위: 채팅 파싱
 
 
-def _cite(document_index: int, cited_text: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        type="char_location", document_index=document_index, cited_text=cited_text
-    )
+def _cite(document_index: int, cited_text: str) -> dict[str, Any]:
+    return {"type": "char_location", "document_index": document_index, "cited_text": cited_text}
 
 
-def _text_block(text: str, citations: list[SimpleNamespace] | None = None) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text=text, citations=citations)
+def _text_block(text: str, citations: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {"type": "text", "text": text, "citations": citations}
 
 
 _SOURCES = [
@@ -220,11 +217,11 @@ def test_parse_chat_drops_out_of_range_index() -> None:
     assert citations == []
 
 
-def _fake_client(responses: list[Any]) -> anthropic.Anthropic:
-    def create(**kwargs: Any) -> Any:
+def _fake_transport(responses: list[dict[str, Any]]) -> AnthropicMessages:
+    def transport(**kwargs: Any) -> dict[str, Any]:
         return responses.pop(0)
 
-    return cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
+    return transport
 
 
 def _brief_with_citation(url: str | None) -> BriefView:
@@ -244,8 +241,8 @@ def _brief_with_citation(url: str | None) -> BriefView:
 
 
 def test_anthropic_chat_grounded_answer() -> None:
-    resp = SimpleNamespace(content=[_text_block("BTC rallied.", [_cite(0, "tops $100K")])])
-    answer = anthropic_chat(_fake_client([resp]), "m")(
+    resp = {"content": [_text_block("BTC rallied.", [_cite(0, "tops $100K")])]}
+    answer = anthropic_chat(_fake_transport([resp]), "m")(
         "무슨 일?", [_brief_with_citation("http://a")]
     )
     assert answer is not None
@@ -254,9 +251,10 @@ def test_anthropic_chat_grounded_answer() -> None:
 
 
 def test_anthropic_chat_refuses_when_no_citation() -> None:
-    resp = SimpleNamespace(content=[_text_block("추측입니다.", citations=None)])
+    resp = {"content": [_text_block("추측입니다.", citations=None)]}
     assert (
-        anthropic_chat(_fake_client([resp]), "m")("?", [_brief_with_citation("http://a")]) is None
+        anthropic_chat(_fake_transport([resp]), "m")("?", [_brief_with_citation("http://a")])
+        is None
     )
 
 
@@ -273,7 +271,7 @@ def test_anthropic_chat_refuses_when_no_sources() -> None:
         citations=[],
     )
     # 근거 0 → API 미호출, None 반환
-    assert anthropic_chat(_fake_client([]), "m")("?", [empty]) is None
+    assert anthropic_chat(_fake_transport([]), "m")("?", [empty]) is None
 
 
 # --------------------------------------------------------------------------- 통합: DB + 라우트

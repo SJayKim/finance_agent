@@ -9,7 +9,7 @@ parse_pass1의 인덱스 매핑에서 보존되는지 회귀로 막는다 — �
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
+from typing import Any
 
 from app.pipeline.citations import SourceDoc, _document_text, parse_pass1
 
@@ -20,21 +20,21 @@ def _doc(doc_id: int, title: str | None, summary: str | None) -> SourceDoc:
     return SourceDoc(raw_document_id=doc_id, title=title, summary=summary, published_at=_PUB)
 
 
-def _cite_for(doc: SourceDoc, span: str) -> SimpleNamespace:
-    """doc 본문에서 span의 실제 char 범위를 찾아 Citations API 응답 cite 블록을 흉내낸다."""
+def _cite_for(doc: SourceDoc, span: str) -> dict[str, Any]:
+    """doc 본문에서 span의 실제 char 범위를 찾아 Citations API 응답 cite 블록(dict)을 흉내낸다."""
     text = _document_text(doc)
     start = text.index(span)
-    return SimpleNamespace(
-        type="char_location",
-        document_index=0,
-        cited_text=span,
-        start_char_index=start,
-        end_char_index=start + len(span),
-    )
+    return {
+        "type": "char_location",
+        "document_index": 0,
+        "cited_text": span,
+        "start_char_index": start,
+        "end_char_index": start + len(span),
+    }
 
 
-def _block(citations: list[SimpleNamespace]) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text="analysis", citations=citations)
+def _block(citations: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"type": "text", "text": "analysis", "citations": citations}
 
 
 def test_every_citation_text_equals_source_span() -> None:
@@ -58,13 +58,13 @@ def test_swap_detects_index_text_mismatch() -> None:
     doc = _doc(10, "Bitcoin tops $100K", "ETF inflows surge")
     text = _document_text(doc)
     # cited_text는 "tops $100K"인데 인덱스는 엉뚱한 0:5("Bitco")를 가리킨다 → 불일치.
-    bad = SimpleNamespace(
-        type="char_location",
-        document_index=0,
-        cited_text="tops $100K",
-        start_char_index=0,
-        end_char_index=5,
-    )
+    bad = {
+        "type": "char_location",
+        "document_index": 0,
+        "cited_text": "tops $100K",
+        "start_char_index": 0,
+        "end_char_index": 5,
+    }
     _, citations = parse_pass1([_block([bad])], [doc])
     c = citations[0]
     assert c.char_start is not None and c.char_end is not None

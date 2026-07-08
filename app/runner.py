@@ -35,12 +35,12 @@ from app.collector.marketaux import MarketauxConnector
 from app.collector.naver import NaverNewsConnector, load_coverage_queries
 from app.collector.opendart_docs import OpenDartDocsConnector
 from app.collector.rss import RssConnector
-from app.config import settings
 from app.db import SessionLocal, engine
 from app.embed import Embedder, get_embedder
+from app.llm.factory import make_digester
 from app.models import AuditLog, DailyDigest, RawDocument
 from app.pipeline.citations import ImpactAnalyzer
-from app.pipeline.digest import Digester, anthropic_digester, build_digest
+from app.pipeline.digest import Digester, build_digest
 from app.pipeline.pipeline import run_pipeline
 from app.pipeline.seed import seed_universe
 
@@ -266,13 +266,7 @@ def main() -> int:
     args = parser.parse_args()
     brief_date = date.fromisoformat(args.date) if args.date else datetime.now(_KST).date()
 
-    digester: Digester | None = None
-    if settings.anthropic_api_key:
-        from app.pipeline.citations import build_client
-
-        digester = anthropic_digester(
-            build_client(settings.anthropic_api_key), settings.impact_model
-        )
+    digester = make_digester()
 
     try:
         report = run_daily(

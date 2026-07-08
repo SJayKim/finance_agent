@@ -2,22 +2,21 @@
 
 DB(실 Postgres): search_citation_spans가 코사인 유사도 순으로 정렬하고 임베딩 NULL인
 문서의 인용을 제외하는지, 누적(전 날짜) 코퍼스를 가로질러 검색하는지. 채팅 거부 경계는
-하루치 채팅과 동일(인용 0 → None) — FakeEmbedder + 가짜 anthropic 클라이언트로 네트워크·
-모델 없이 검증한다. 라우트는 _rag_analyzer를 monkeypatch로 주입(키·임베더 불필요).
+하루치 채팅과 동일(인용 0 → None) — FakeEmbedder + 가짜 transport로 네트워크·모델 없이
+검증한다. 라우트는 _rag_analyzer를 monkeypatch로 주입(키·임베더 불필요).
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
-import anthropic
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.embed import FakeEmbedder
+from app.llm.gateway import AnthropicMessages
 from app.main import app
 from app.models import BriefItem, Citation, RawDocument, Source
 from app.web.chat import ChatAnswer, ChatCitation, anthropic_rag_chat
@@ -36,21 +35,19 @@ _NEAR_CITED = "Bitcoin tops $100K"
 _FAR_CITED = "농산물 작황 호조"
 
 
-def _cite(document_index: int, cited_text: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        type="char_location", document_index=document_index, cited_text=cited_text
-    )
+def _cite(document_index: int, cited_text: str) -> dict[str, Any]:
+    return {"type": "char_location", "document_index": document_index, "cited_text": cited_text}
 
 
-def _text_block(text: str, citations: list[SimpleNamespace] | None = None) -> SimpleNamespace:
-    return SimpleNamespace(type="text", text=text, citations=citations)
+def _text_block(text: str, citations: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {"type": "text", "text": text, "citations": citations}
 
 
-def _fake_client(responses: list[Any]) -> anthropic.Anthropic:
-    def create(**kwargs: Any) -> Any:
+def _fake_transport(responses: list[dict[str, Any]]) -> AnthropicMessages:
+    def transport(**kwargs: Any) -> dict[str, Any]:
         return responses.pop(0)
 
-    return cast(anthropic.Anthropic, SimpleNamespace(messages=SimpleNamespace(create=create)))
+    return transport
 
 
 def _add_doc(s: Session, src_id: int, ext: str, embed_text: str | None, url: str) -> RawDocument:
@@ -138,15 +135,15 @@ def test_rag_chat_grounded_answer_cross_date(db: sessionmaker) -> None:
         s.commit()
 
         # 검색은 거리순 — document_index가 sources 순서이므로 두 인덱스 모두 인용해 다중 날짜 검증.
-        resp = SimpleNamespace(
-            content=[
+        resp = {
+            "content": [
                 _text_block(
                     "두 이벤트.",
                     [_cite(0, "Bitcoin tops $100K"), _cite(1, "ETH upgrade live")],
                 )
             ]
-        )
-        analyzer = anthropic_rag_chat(_fake_client([resp]), "m", FakeEmbedder())
+        }
+        analyzer = anthropic_rag_chat(_fake_transport([resp]), "m", FakeEmbedder())
         answer = analyzer(s, "최근 무슨 일?")
 
     assert answer is not None
@@ -162,16 +159,16 @@ def test_rag_chat_refuses_when_model_cites_nothing(db: sessionmaker) -> None:
         doc = _add_doc(s, src.id, "d", _NEAR_TEXT, "http://d")
         _add_brief_with_citation(s, date(2026, 6, 21), doc.id, "Bitcoin tops $100K")
         s.commit()
-        resp = SimpleNamespace(content=[_text_block("추측입니다.", citations=None)])
-        analyzer = anthropic_rag_chat(_fake_client([resp]), "m", FakeEmbedder())
+        resp = {"content": [_text_block("추측입니다.", citations=None)]}
+        analyzer = anthropic_rag_chat(_fake_transport([resp]), "m", FakeEmbedder())
         assert analyzer(s, "?") is None  # 인용 0 → 거부
 
 
 def test_rag_chat_refuses_when_corpus_empty(db: sessionmaker) -> None:
-    # 임베딩된 인용이 0건 → 검색 결과 없음 → 클라이언트 호출 없이 None.
+    # 임베딩된 인용이 0건 → 검색 결과 없음 → transport 호출 없이 None.
     with db() as s:
-        analyzer = anthropic_rag_chat(_fake_client([]), "m", FakeEmbedder())
-        assert analyzer(s, "아무거나") is None  # _fake_client([]) → pop이 호출되면 IndexError
+        analyzer = anthropic_rag_chat(_fake_transport([]), "m", FakeEmbedder())
+        assert analyzer(s, "아무거나") is None  # _fake_transport([]) → pop이 호출되면 IndexError
 
 
 # --------------------------------------------------------------------------- 라우트: scope 분기

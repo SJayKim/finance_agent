@@ -14,8 +14,12 @@ dependencies = [
     "psycopg[binary]",
     "pydantic-settings",
     "httpx",
-    "anthropic",
+    # openai는 gateway가 직접 씀(litellm.responses 예외 계열도 openai). anthropic 호출은
+    # litellm.anthropic 네이티브 브리지 경유라 anthropic SDK 직접 의존 없음(플랜 11).
     "openai",
+    # 정확 핀: 주간 릴리스 회귀 잦음 + top-level 파라미터 화이트리스트(output_config 포함)
+    # 검증 버전(플랜 11). 업그레이드는 별도 PR + compare 스모크 재실행.
+    "litellm==1.91.0",
     "truststore>=0.10.4",
     "markdown>=3.10.2",
 ]

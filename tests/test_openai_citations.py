@@ -1,8 +1,9 @@
 """OpenAI quote-and-verify 단일 콜 분석 단위 테스트 (네트워크 없이).
 
-순수 함수(verify_quotes 등)와 openai_analyzer 오케스트레이션을 가짜 클라이언트로 덮는다.
-실 OpenAI 호출은 하지 않는다(키·네트워크 불필요). Responses API 응답은 SimpleNamespace로
-흉내낸다 — 방어적 getattr 접근이라 더미로 충분. test_citations.py와 같은 컨벤션.
+순수 함수(verify_quotes 등)와 openai_analyzer 오케스트레이션을 가짜 transport로 덮는다.
+실 OpenAI 호출은 하지 않는다(키·네트워크 불필요). transport가 돌려주는 응답은 litellm
+ResponsesAPIResponse를 흉내낸 SimpleNamespace다(analyzer가 output_text/status 속성 접근).
+토큰·calls 집계는 transport 책임(D3, test_gateway에서 검증)이라 여기선 quote 메트릭만 본다.
 """
 
 from __future__ import annotations
@@ -11,12 +12,11 @@ import json
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
-import httpx
-import openai
 import pytest
 
+from app.llm.gateway import LLMError, OpenAIResponses
 from app.pipeline.citations import SourceDoc, _document_text
 from app.pipeline.openai_citations import (
     _SYSTEM,
@@ -47,22 +47,17 @@ def _payload(**overrides: Any) -> dict[str, Any]:
 
 
 def _response(payload: dict[str, Any], status: str = "completed") -> SimpleNamespace:
-    return SimpleNamespace(
-        status=status,
-        output_text=json.dumps(payload, ensure_ascii=False),
-        usage=SimpleNamespace(input_tokens=100, output_tokens=50),
-    )
+    return SimpleNamespace(status=status, output_text=json.dumps(payload, ensure_ascii=False))
 
 
-def _fake_client(responses: list[Any]) -> tuple[openai.OpenAI, list[dict[str, Any]]]:
+def _fake_transport(responses: list[Any]) -> tuple[OpenAIResponses, list[dict[str, Any]]]:
     calls: list[dict[str, Any]] = []
 
-    def create(**kwargs: Any) -> Any:
+    def transport(**kwargs: Any) -> Any:
         calls.append(kwargs)
         return responses.pop(0)
 
-    client = SimpleNamespace(responses=SimpleNamespace(create=create))
-    return cast(openai.OpenAI, client), calls
+    return transport, calls
 
 
 def test_docs_prompt_numbers_and_exact_document_text() -> None:
@@ -75,8 +70,11 @@ def test_docs_prompt_numbers_and_exact_document_text() -> None:
 
 def test_verify_quotes_exact_match_fills_offsets() -> None:
     doc = _doc(10, title="BTC tops $100K", summary="details")
-    spans, dropped = verify_quotes({"citations": [{"doc_index": 0, "quote": "tops $100K"}]}, [doc])
+    spans, dropped, verified = verify_quotes(
+        {"citations": [{"doc_index": 0, "quote": "tops $100K"}]}, [doc]
+    )
     assert dropped == 0
+    assert verified == [0]
     assert len(spans) == 1
     span = spans[0]
     assert span.raw_document_id == 10
@@ -86,12 +84,29 @@ def test_verify_quotes_exact_match_fills_offsets() -> None:
     assert span.source_published_at == _PUB
 
 
+def test_verify_quotes_returns_deduped_doc_indices() -> None:
+    """3번째 반환값: 검증 통과 인용의 doc_index를 등장 순서로 dedupe(digest source 역산용)."""
+    docs = [_doc(10, title="BTC tops $100K", summary="rally"), _doc(20, title="ETH gains up")]
+    data = {
+        "citations": [
+            {"doc_index": 0, "quote": "tops $100K"},
+            {"doc_index": 0, "quote": "rally"},  # 같은 doc 재인용 — dedupe
+            {"doc_index": 1, "quote": "ETH gains up"},
+        ]
+    }
+    spans, dropped, verified = verify_quotes(data, docs)
+    assert dropped == 0
+    assert len(spans) == 3
+    assert verified == [0, 1]
+
+
 def test_verify_quotes_whitespace_fallback_keeps_none_offsets() -> None:
     doc = _doc(10, title=None, summary="가격이 급등\n했다")
-    spans, dropped = verify_quotes(
+    spans, dropped, verified = verify_quotes(
         {"citations": [{"doc_index": 0, "quote": "가격이 급등 했다"}]}, [doc]
     )
     assert dropped == 0
+    assert verified == [0]
     assert len(spans) == 1
     assert spans[0].char_start is None
     assert spans[0].char_end is None
@@ -99,24 +114,28 @@ def test_verify_quotes_whitespace_fallback_keeps_none_offsets() -> None:
 
 def test_verify_quotes_drops_hallucinated_quote(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
-        spans, dropped = verify_quotes(
+        spans, dropped, verified = verify_quotes(
             {"citations": [{"doc_index": 0, "quote": "원문에 없는 문장"}]}, [_doc(10)]
         )
     assert spans == []
     assert dropped == 1
+    assert verified == []
     assert "quote dropped" in caplog.text
 
 
 def test_verify_quotes_drops_out_of_range_index() -> None:
-    spans, dropped = verify_quotes({"citations": [{"doc_index": 5, "quote": "t"}]}, [_doc(10)])
+    spans, dropped, verified = verify_quotes(
+        {"citations": [{"doc_index": 5, "quote": "t"}]}, [_doc(10)]
+    )
     assert spans == []
     assert dropped == 1
+    assert verified == []
 
 
 def test_analyzer_single_call_happy_path() -> None:
     stats = AnalyzerStats()
-    client, calls = _fake_client([_response(_payload())])
-    result = openai_analyzer(client, "gpt-5.4-mini", stats)([_doc(10, title="BTC tops $100K")])
+    transport, calls = _fake_transport([_response(_payload())])
+    result = openai_analyzer(transport, "gpt-5.4-mini", stats)([_doc(10, title="BTC tops $100K")])
     assert result is not None
     assert result.analysis_text == "Bitcoin rally"
     assert result.event_type == "price_move"
@@ -126,59 +145,53 @@ def test_analyzer_single_call_happy_path() -> None:
     assert [c.raw_document_id for c in result.citations] == [10]
     assert len(calls) == 1  # 단일 콜
     call = calls[0]
-    assert call["model"] == "gpt-5.4-mini"
+    assert call["model"] == "gpt-5.4-mini"  # provider 프리픽스는 transport가 붙임
     fmt = call["text"]["format"]
     assert fmt["type"] == "json_schema"
     assert fmt["name"] == "impact_analysis"
     assert fmt["strict"] is True
-    assert stats.calls == 1
+    # 토큰·calls는 transport 책임(D3) — 분석기는 quote 메트릭만 갱신.
     assert stats.quotes_returned == 1
     assert stats.quotes_dropped == 0
-    assert stats.input_tokens == 100
-    assert stats.output_tokens == 50
 
 
 def test_analyzer_without_effort_omits_reasoning_and_keeps_budget() -> None:
-    client, calls = _fake_client([_response(_payload())])
-    assert openai_analyzer(client, "m")([_doc(10, title="BTC tops $100K")]) is not None
+    transport, calls = _fake_transport([_response(_payload())])
+    assert openai_analyzer(transport, "m")([_doc(10, title="BTC tops $100K")]) is not None
     call = calls[0]
     assert "reasoning" not in call
     assert call["max_output_tokens"] == 8192
 
 
 def test_analyzer_with_effort_sends_reasoning_and_raises_budget() -> None:
-    stats = AnalyzerStats()
-    resp = _response(_payload())
-    resp.usage.output_tokens_details = SimpleNamespace(reasoning_tokens=30)
-    client, calls = _fake_client([resp])
-    analyzer = openai_analyzer(client, "m", stats, reasoning_effort="medium")
+    transport, calls = _fake_transport([_response(_payload())])
+    analyzer = openai_analyzer(transport, "m", reasoning_effort="medium")
     assert analyzer([_doc(10, title="BTC tops $100K")]) is not None
     call = calls[0]
     assert call["reasoning"] == {"effort": "medium"}
     assert call["max_output_tokens"] == 16384
-    assert stats.reasoning_tokens == 30
 
 
 def test_analyzer_system_override_reaches_api_call() -> None:
     """프롬프트 버전 오버라이드(플랜 10)가 instructions에 도달하는지."""
-    client, calls = _fake_client([_response(_payload())])
-    analyzer = openai_analyzer(client, "m", system="SYS OVERRIDE")
+    transport, calls = _fake_transport([_response(_payload())])
+    analyzer = openai_analyzer(transport, "m", system="SYS OVERRIDE")
     assert analyzer([_doc(10, title="BTC tops $100K")]) is not None
     assert calls[0]["instructions"] == "SYS OVERRIDE"
 
 
 def test_analyzer_default_system_is_production_constant() -> None:
     """오버라이드 미지정 시 현행 상수 그대로 — 운영 경로 불변 증명."""
-    client, calls = _fake_client([_response(_payload())])
-    assert openai_analyzer(client, "m")([_doc(10, title="BTC tops $100K")]) is not None
+    transport, calls = _fake_transport([_response(_payload())])
+    assert openai_analyzer(transport, "m")([_doc(10, title="BTC tops $100K")]) is not None
     assert calls[0]["instructions"] is _SYSTEM
 
 
 def test_analyzer_all_quotes_dropped_returns_empty_result() -> None:
     stats = AnalyzerStats()
     payload = _payload(citations=[{"doc_index": 0, "quote": "환각 인용"}])
-    client, _ = _fake_client([_response(payload)])
-    result = openai_analyzer(client, "m", stats)([_doc(10)])
+    transport, _ = _fake_transport([_response(payload)])
+    result = openai_analyzer(transport, "m", stats)([_doc(10)])
     assert result is not None  # degraded가 아니라 empty 유지
     assert result.citations == []
     assert result.analysis_text == ""
@@ -188,25 +201,24 @@ def test_analyzer_all_quotes_dropped_returns_empty_result() -> None:
 
 
 def test_analyzer_returns_none_when_no_groundable_docs() -> None:
-    client, calls = _fake_client([])
-    assert openai_analyzer(client, "m")([_doc(10, title=None, summary=None)]) is None
+    transport, calls = _fake_transport([])
+    assert openai_analyzer(transport, "m")([_doc(10, title=None, summary=None)]) is None
     assert calls == []  # API 미호출
 
 
 def test_analyzer_returns_none_on_api_error(caplog: pytest.LogCaptureFixture) -> None:
-    def create(**kwargs: Any) -> Any:
-        raise openai.APIConnectionError(request=httpx.Request("POST", "https://api"))
+    def transport(**kwargs: Any) -> Any:
+        raise LLMError("APIConnectionError: down")
 
-    client = cast(openai.OpenAI, SimpleNamespace(responses=SimpleNamespace(create=create)))
     with caplog.at_level(logging.WARNING):
-        assert openai_analyzer(client, "m")([_doc(10)]) is None
+        assert openai_analyzer(transport, "m")([_doc(10)]) is None
     assert "openai impact analyzer failed" in caplog.text
 
 
 def test_analyzer_returns_none_on_truncated_json(caplog: pytest.LogCaptureFixture) -> None:
-    resp = SimpleNamespace(status="incomplete", output_text='{"analysis_text": "cut', usage=None)
-    client, _ = _fake_client([resp])
+    resp = SimpleNamespace(status="incomplete", output_text='{"analysis_text": "cut')
+    transport, _ = _fake_transport([resp])
     with caplog.at_level(logging.WARNING):
-        assert openai_analyzer(client, "m")([_doc(10)]) is None
+        assert openai_analyzer(transport, "m")([_doc(10)]) is None
     assert "incomplete" in caplog.text
     assert "JSONDecodeError" in caplog.text

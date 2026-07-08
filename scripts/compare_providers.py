@@ -13,7 +13,7 @@ analyze_impact 직접 호출인 이유: dedup/cluster 재실행·advisory lock�
 
 플랜 10 확장: --prompt-version(prompt_versions 레지스트리), --anthropic-model,
 --include-ids(우선순위 상한 밖 프로브 아이템 강제 분석), 모델별 단가 테이블,
-Anthropic 토큰 집계(스크립트 측 클라이언트 프록시 — 운영 무변경),
+토큰 집계(gateway transport에 stats 주입 — 운영 무변경),
 --dump-dir 지정 시 summary.json(args+메트릭) 기록.
 """
 
@@ -26,18 +26,17 @@ import time
 from collections import Counter
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
-import anthropic
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
+from app.llm.gateway import AnalyzerStats, anthropic_messages, openai_responses
 from app.models import BriefItem, Citation
-from app.pipeline.citations import anthropic_analyzer, build_client
-from app.pipeline.openai_citations import AnalyzerStats, build_openai_client, openai_analyzer
+from app.pipeline.citations import anthropic_analyzer
+from app.pipeline.openai_citations import openai_analyzer
 from app.pipeline.pipeline import _analyze_item, analyze_impact
 from app.pipeline.prompt_versions import anthropic_prompts, openai_prompts
 
@@ -60,22 +59,6 @@ def _cost_usd(model: str, pricing: dict[str, tuple[float, float]], stats: Analyz
     return round(
         stats.input_tokens * usd_in / 1_000_000 + stats.output_tokens * usd_out / 1_000_000, 4
     )
-
-
-class _RecordingMessages:
-    """messages.create 프록시 — Anthropic usage 토큰을 AnalyzerStats에 집계(스크립트 전용)."""
-
-    def __init__(self, inner: Any, stats: AnalyzerStats) -> None:
-        self._inner = inner
-        self._stats = stats
-
-    def create(self, **kwargs: Any) -> Any:
-        resp = self._inner.create(**kwargs)
-        usage = getattr(resp, "usage", None)
-        self._stats.calls += 1
-        self._stats.input_tokens += getattr(usage, "input_tokens", 0) or 0
-        self._stats.output_tokens += getattr(usage, "output_tokens", 0) or 0
-        return resp
 
 
 def _reset(session: Session, brief_date: date) -> None:
@@ -250,21 +233,19 @@ def main() -> int:
         if provider == "anthropic":
             assert settings.anthropic_api_key
             prompts_a = anthropic_prompts(args.prompt_version)
-            real_client = build_client(settings.anthropic_api_key)
-            wrapped = cast(
-                anthropic.Anthropic,
-                SimpleNamespace(messages=_RecordingMessages(real_client.messages, stats)),
-            )
+            # transport에 stats 주입 → 토큰·calls 집계(운영 경로는 stats=None). anthropic
+            # analyzer는 quote 메트릭이 없어 transport 한쪽만 주입.
             analyzer = anthropic_analyzer(
-                wrapped,
+                anthropic_messages(settings.anthropic_api_key, stats),
                 anthropic_model,
                 pass1_system=prompts_a.pass1_system,
                 pass2_system=prompts_a.pass2_system,
             )
         else:
             assert settings.openai_api_key
+            # openai는 stats 이중 주입: transport가 토큰·calls, analyzer가 quote 메트릭(D3).
             analyzer = openai_analyzer(
-                build_openai_client(settings.openai_api_key),
+                openai_responses(settings.openai_api_key, stats),
                 args.model,
                 stats,
                 reasoning_effort=args.reasoning_effort,

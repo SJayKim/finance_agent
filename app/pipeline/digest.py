@@ -23,13 +23,12 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Any, cast
+from typing import Any
 
-import anthropic
-from anthropic.types import MessageParam
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.llm.gateway import AnthropicMessages, LLMError
 from app.models import BriefItem, Citation, DailyDigest, DigestSource
 from app.pipeline.citations import CitedSpan
 
@@ -133,21 +132,21 @@ def parse_pass1(
     cited 블록의 document_index로 sent_inputs를 역참조해 raw_document_id·발행시각을 붙이고,
     어느 brief_item에서 나왔는지(source_brief_item_ids)를 등장 순서대로 중복 없이 모은다.
     sent_inputs는 _build_documents에 넘긴 것과 같은 순서여야 한다(index 매핑).
-    SDK 타입에 묶이지 않게 getattr로 방어적 접근 — 테스트는 더미 객체로 검증.
+    content는 transport가 돌려준 raw /v1/messages JSON의 content 블록(dict)들.
     """
     texts: list[str] = []
     citations: list[CitedSpan] = []
     source_ids: list[int] = []
     for block in content:
-        if getattr(block, "type", None) != "text":
+        if block.get("type") != "text":
             continue
-        texts.append(getattr(block, "text", "") or "")
-        for cite in getattr(block, "citations", None) or []:
-            idx = getattr(cite, "document_index", None)
+        texts.append(block.get("text") or "")
+        for cite in block.get("citations") or []:
+            idx = cite.get("document_index")
             if idx is None or idx < 0 or idx >= len(sent_inputs):
                 continue
             src = sent_inputs[idx]
-            cited_text = getattr(cite, "cited_text", "") or ""
+            cited_text = cite.get("cited_text") or ""
             # cited_text는 패스1이 실제 인용한 span. raw_document_id는 그 span을 담은
             # brief_item의 첫 citation에서 가져온다(span 자체가 ground truth라 충분).
             ref = src.citations[0] if src.citations else None
@@ -155,8 +154,8 @@ def parse_pass1(
                 CitedSpan(
                     raw_document_id=ref.raw_document_id if ref else 0,
                     cited_text=cited_text,
-                    char_start=getattr(cite, "start_char_index", None),
-                    char_end=getattr(cite, "end_char_index", None),
+                    char_start=cite.get("start_char_index"),
+                    char_end=cite.get("end_char_index"),
                     source_published_at=ref.source_published_at if ref else None,
                 )
             )
@@ -174,51 +173,52 @@ def _pass2_input(analysis_text: str, citations: Sequence[CitedSpan]) -> str:
 def _first_text(content: Any) -> str:
     """content 블록들에서 첫 text 블록의 텍스트(없으면 빈 문자열)."""
     for block in content:
-        if getattr(block, "type", None) == "text":
-            return getattr(block, "text", "") or ""
+        if block.get("type") == "text":
+            return block.get("text") or ""
     return ""
 
 
-def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
-    """실 Anthropic 2-패스 다이제스트 생성기. API 장애·쿼터 시 None(호출자 → degraded)."""
+def anthropic_digester(transport: AnthropicMessages, model: str) -> Digester:
+    """실 Anthropic 2-패스 다이제스트 생성기. API 장애·쿼터 시 None(호출자 → degraded).
+
+    transport: gateway.anthropic_messages 콜러블 — 현행 client.messages.create와 같은 kwargs를
+    받고 raw /v1/messages JSON dict를 돌려준다.
+    """
 
     def digest(inputs: Sequence[DigestInput]) -> list[DigestSection] | None:
         sent = [inp for inp in inputs if _input_text(inp)]
         if not sent:
             return []  # 인용할 본문이 없음 → 빈 다이제스트
         try:
-            pass1 = client.messages.create(
+            pass1 = transport(
                 model=model,
                 max_tokens=4096,
                 thinking={"type": "adaptive"},
                 system=_PASS1_SYSTEM,
-                messages=cast(
-                    "list[MessageParam]",
-                    [
-                        {
-                            "role": "user",
-                            "content": [
-                                *_build_documents(sent),
-                                {"type": "text", "text": _PASS1_TASK},
-                            ],
-                        }
-                    ],
-                ),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *_build_documents(sent),
+                            {"type": "text", "text": _PASS1_TASK},
+                        ],
+                    }
+                ],
             )
-            analysis_text, citations, source_ids = parse_pass1(pass1.content, sent)
+            analysis_text, citations, source_ids = parse_pass1(pass1["content"], sent)
             if not citations:
                 # 근거 없음 — 환각으로 채우지 않는다(§10). 빈 다이제스트.
                 return []
-            pass2 = client.messages.create(
+            pass2 = transport(
                 model=model,
                 max_tokens=8192,  # 4096도 브리프 많은 날(7/2 degraded) JSON이 잘림 — 하루 1콜이라 비용 무시
                 system=_PASS2_SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": _PASS2_SCHEMA}},
                 messages=[{"role": "user", "content": _pass2_input(analysis_text, citations)}],
             )
-            if getattr(pass2, "stop_reason", None) == "max_tokens":
+            if pass2.get("stop_reason") == "max_tokens":
                 logger.warning("digest pass2 truncated at max_tokens — JSON may be cut")
-            data = json.loads(_first_text(pass2.content) or "{}")
+            data = json.loads(_first_text(pass2["content"]) or "{}")
             # 같은 section 키로 여러 테마를 돌려줄 수 있다(예: 크립토 일색인 날 전부 "macro").
             # uq_daily_digests_date_section은 (brief_date, section) 유일을 강제하므로 키별로
             # 합친다 — body_text는 이어붙이고 첫 heading을 유지(모델 출력만 사용, 무근거 생성 X).
@@ -246,9 +246,9 @@ def anthropic_digester(client: anthropic.Anthropic, model: str) -> Digester:
                     source_brief_item_ids=list(source_ids),
                 )
             return list(sections.values())
-        except (anthropic.APIError, json.JSONDecodeError) as exc:
-            # APIError: 쿼터 소진·장애. JSONDecodeError: 패스2 구조화 JSON 잘림(max_tokens)
-            # — 둘 다 환각 대신 degraded로 떨어뜨려 daily_run 전체를 죽이지 않는다(§10).
+        except (LLMError, json.JSONDecodeError) as exc:
+            # LLMError: 쿼터 소진·장애(gateway 정규화). JSONDecodeError: 패스2 구조화 JSON
+            # 잘림(max_tokens) — 둘 다 환각 대신 degraded로 떨어뜨려 daily_run을 죽이지 않는다(§10).
             logger.warning("digester failed: %s: %s", type(exc).__name__, exc)
             return None
 
