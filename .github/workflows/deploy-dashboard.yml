@@ -34,6 +34,15 @@ jobs:
         with:
           version: 0.4.64
 
+      # OPENAI_API_KEY(런타임 비밀)를 GitHub 시크릿에서 Fly 시크릿으로 동기화. --stage는
+      # 즉시 배포 없이 스테이징만 → 다음 flyctl deploy가 함께 적용(이중 배포 방지). GitHub
+      # 시크릿에서 키를 로테이션하면 다음 배포에 자동 반영. 미설정이면 빈 값 → 챗/임팩트 비활성.
+      - name: Stage OpenAI runtime secret (Fly)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_ACCESS_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl secrets set OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" --stage -a finance-agent-dashboard
+
       - name: Deploy dashboard
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
