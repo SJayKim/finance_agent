@@ -81,6 +81,13 @@ def test_anthropic_transport_prefixes_model_attaches_key_passes_kwargs_verbatim(
     assert call["messages"] is messages
 
 
+def test_anthropic_transport_sets_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """스톨된 콜이 무한 블록하지 않게 per-call timeout을 붙인다(2026-07-08 digest 57분 hang)."""
+    calls = _fake_acreate(monkeypatch, {"content": []})
+    anthropic_messages("k")(model="m", max_tokens=16, messages=[])
+    assert calls[0]["timeout"] == gateway._REQUEST_TIMEOUT_S
+
+
 def test_anthropic_transport_updates_stats_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
     raw = {"content": [], "usage": {"input_tokens": 100, "output_tokens": 50}}
     _fake_acreate(monkeypatch, raw)
@@ -154,6 +161,14 @@ def test_openai_transport_prefixes_model_attaches_key_passes_kwargs_verbatim(
     assert call["input"] == "본문"
     assert call["text"] is text_payload
     assert call["reasoning"] == {"effort": "medium"}
+
+
+def test_openai_transport_sets_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """digest·impact·chat이 공유하는 openai 경로에 per-call timeout(hang → 무한 블록 방지)."""
+    resp = SimpleNamespace(output_text="{}", status="completed", usage=None)
+    calls = _fake_responses(monkeypatch, resp)
+    openai_responses("k")(model="m", input="q")
+    assert calls[0]["timeout"] == gateway._REQUEST_TIMEOUT_S
 
 
 def test_openai_transport_updates_stats_with_reasoning_tokens(

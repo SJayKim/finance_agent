@@ -46,6 +46,13 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+# 전송 계층 per-call 타임아웃(초). litellm은 timeout을 명시 안 하면 스톨된 콜이 무한
+# 블록해 daily 잡이 GitHub 90분 guillotine까지 매달린다(2026-07-08 digest 콜 57분 hang →
+# build_digest 미완 → 그날 브리프 통째 손실). 정상 digest 패스 ~25s·impact 콜 ~9s라 120s는
+# 넉넉한 여유이면서 hang을 2분에 끊는다. 타임아웃은 openai.APITimeoutError(→ _TRANSPORT_ERRORS)
+# 로 정규화돼 각 분석기의 graceful degrade(degraded 다이제스트 등)로 떨어진다.
+_REQUEST_TIMEOUT_S = 120
+
 
 class LLMError(Exception):
     """transport 계층 API 실패의 단일 정규화 예외(연결·타임아웃·쿼터·장애 포함)."""
@@ -86,7 +93,10 @@ def anthropic_messages(api_key: str, stats: AnalyzerStats | None = None) -> Anth
         try:
             resp = asyncio.run(
                 litellm.anthropic.messages.acreate(
-                    model=f"anthropic/{model}", api_key=api_key, **kwargs
+                    model=f"anthropic/{model}",
+                    api_key=api_key,
+                    timeout=_REQUEST_TIMEOUT_S,
+                    **kwargs,
                 )
             )
         except _TRANSPORT_ERRORS as exc:
@@ -107,7 +117,9 @@ def openai_responses(api_key: str, stats: AnalyzerStats | None = None) -> OpenAI
 
     def transport(*, model: str, **kwargs: Any) -> Any:
         try:
-            resp = litellm.responses(model=f"openai/{model}", api_key=api_key, **kwargs)
+            resp = litellm.responses(
+                model=f"openai/{model}", api_key=api_key, timeout=_REQUEST_TIMEOUT_S, **kwargs
+            )
         except _TRANSPORT_ERRORS as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
         if stats is not None:
