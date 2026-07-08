@@ -18,7 +18,7 @@ def _spy(monkeypatch: pytest.MonkeyPatch, module: str, name: str) -> list[tuple[
     """지정 생성자를 인자 기록 스파이로 교체. 반환 리스트에 (args...)가 쌓인다."""
     calls: list[tuple[Any, ...]] = []
 
-    def fake(*args: Any) -> str:
+    def fake(*args: Any, **kwargs: Any) -> str:
         calls.append(args)
         return f"{name}-analyzer"
 
@@ -56,6 +56,21 @@ def test_impact_openai_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     transport, model = calls[0]
     assert callable(transport)
     assert model == "claude-opus-4-8"  # openai 용도도 impact_model 폴백
+
+
+def test_impact_openai_branch_uses_reasoning_effort_medium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(factory.settings, "impact_provider", "openai")
+    captured: dict[str, Any] = {}
+
+    def fake(*args: Any, **kwargs: Any) -> str:
+        captured["kwargs"] = kwargs
+        return "openai_analyzer-analyzer"
+
+    monkeypatch.setattr("app.pipeline.openai_citations.openai_analyzer", fake)
+    factory.make_impact_analyzer()
+    assert captured["kwargs"].get("reasoning_effort") == "medium"
 
 
 def test_impact_none_when_provider_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:

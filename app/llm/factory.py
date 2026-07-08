@@ -43,7 +43,9 @@ def make_impact_analyzer() -> ImpactAnalyzer | None:
         return anthropic_analyzer(anthropic_messages(key), model)
     from app.pipeline.openai_citations import openai_analyzer
 
-    return openai_analyzer(openai_responses(key), model)
+    # effort medium: 인용 무결성(drop 1%→0%)·꼬리 케이스 개선(플랜 08 재비교 3). 점수
+    # 캘리브레이션은 불변이라 랭킹 영향 없음. Plan 11대로 설정엔 안 넣고 코드 기본값으로 고정.
+    return openai_analyzer(openai_responses(key), model, reasoning_effort="medium")
 
 
 def make_digester() -> Digester | None:
