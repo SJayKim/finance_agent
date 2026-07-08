@@ -22,7 +22,9 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # gpt-5.4 전환(7/8) 후 총 실행이 90분 cap을 넘겨 취소 → 그날 브리프 손실(build_digest가
+    # run_pipeline 뒤라 미실행). 병목 프로파일 전까지 180으로 상향해 브리프 손실을 막는다.
+    timeout-minutes: 180
 
     env:
       # 필수: 매니지드 Postgres+pgvector 접속 문자열(sqlalchemy psycopg 형식).
