@@ -3,6 +3,18 @@
 app = "finance-agent-dashboard"
 primary_region = "nrt"
 
+# LLM 게이트웨이 provider·model 스위치(플랜 11) — 비밀 아님이라 여기 둔다. 대시보드는
+# impact/digest(/trigger·/run-daily)와 chat를 모두 돌리므로 세 용도 전부 openai/gpt-5.4로.
+# OPENAI_API_KEY는 비밀 → `flyctl secrets set`으로 별도 주입(여기 두지 않는다).
+# provider와 model은 반드시 함께 — model만 폴백되면 openai/claude-opus-4-8 → model_not_found.
+[env]
+  IMPACT_PROVIDER = "openai"
+  IMPACT_MODEL = "gpt-5.4"
+  DIGEST_PROVIDER = "openai"
+  DIGEST_MODEL = "gpt-5.4"
+  CHAT_PROVIDER = "openai"
+  CHAT_MODEL = "gpt-5.4"
+
 [build]
   dockerfile = "Dockerfile"
 

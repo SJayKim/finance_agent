@@ -29,6 +29,14 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       # 선택: 미설정 시 빈 값 → 해당 소스/분석은 비활성(소스 격리로 skip).
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # LLM 게이트웨이 provider·model 스위치(플랜 11). 일일 임팩트·다이제스트를 openai/gpt-5.4로.
+      # provider와 model은 반드시 함께 설정 — model만 폴백되면 openai/claude-opus-4-8 →
+      # model_not_found → graceful degrade(빈/degraded 브리프).
+      IMPACT_PROVIDER: openai
+      IMPACT_MODEL: gpt-5.4
+      DIGEST_PROVIDER: openai
+      DIGEST_MODEL: gpt-5.4
       OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
       SEC_EDGAR_USER_AGENT: ${{ secrets.SEC_EDGAR_USER_AGENT }}
       OPENFIGI_API_KEY: ${{ secrets.OPENFIGI_API_KEY }}
