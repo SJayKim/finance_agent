@@ -30,6 +30,29 @@ def test_dashboard_root_requires_auth() -> None:
     assert resp.headers["www-authenticate"] == "Basic"
 
 
+def test_public_dashboard_without_auth(db: sessionmaker) -> None:
+    resp = client.get("/public")
+    assert resp.status_code == 200
+    assert resp.headers["x-robots-tag"] == "noindex, nofollow"
+    assert '<meta name="robots" content="noindex, nofollow"' in resp.text
+    assert 'hx-post="/chat"' not in resp.text
+
+
+def test_public_dashboard_accepts_date_without_auth(db: sessionmaker) -> None:
+    resp = client.get("/public?date=2099-01-01")
+    assert resp.status_code == 200
+    assert 'href="/public?date=' in resp.text
+    assert 'href="/?date=' not in resp.text
+
+
+def test_public_dashboard_does_not_depend_on_auth_config(
+    db: sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.main.settings.dashboard_username", None)
+    monkeypatch.setattr("app.main.settings.dashboard_password", None)
+    assert client.get("/public").status_code == 200
+
+
 def test_dashboard_root_rejects_invalid_auth() -> None:
     resp = client.get("/", auth=("wrong", "credentials"))
     assert resp.status_code == 401

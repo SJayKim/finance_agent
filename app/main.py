@@ -175,8 +175,12 @@ def run_daily_endpoint() -> dict[str, object]:
     }
 
 
-@app.get("/", response_class=HTMLResponse, dependencies=[Depends(_require_dashboard_auth)])
-def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
+def _render_dashboard(
+    request: Request,
+    date: str | None,
+    *,
+    public_mode: bool,
+) -> HTMLResponse:
     """추적성 뷰 + 일일 다이제스트 + 소스 헬스 (§4 트랙 E / §8.6).
 
     rag_enabled는 _rag_available()(키 + 라이브러리 설치 여부의 싼 확인) — 여기서
@@ -201,7 +205,7 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
         }
         for d in (today - timedelta(days=n) for n in range(13, -1, -1))
     ]
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "index.html",
         {
@@ -215,10 +219,27 @@ def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
             "prev_date": (brief_date - timedelta(days=1)).isoformat(),
             "next_date": (brief_date + timedelta(days=1)).isoformat(),
             "last_updated": last_updated,
-            "chat_enabled": chat_key_configured(),
-            "rag_enabled": _rag_available(),
+            "chat_enabled": False if public_mode else chat_key_configured(),
+            "rag_enabled": False if public_mode else _rag_available(),
+            "public_mode": public_mode,
+            "dashboard_base_path": "/public" if public_mode else "/",
         },
     )
+    if public_mode:
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
+
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(_require_dashboard_auth)])
+def dashboard(request: Request, date: str | None = None) -> HTMLResponse:
+    """Protected operator dashboard with read-only views plus authenticated chat."""
+    return _render_dashboard(request, date, public_mode=False)
+
+
+@app.get("/public", response_class=HTMLResponse)
+def public_dashboard(request: Request, date: str | None = None) -> HTMLResponse:
+    """Public read-only dashboard. Write/LLM actions stay behind dashboard auth."""
+    return _render_dashboard(request, date, public_mode=True)
 
 
 @app.post("/chat", response_class=HTMLResponse, dependencies=[Depends(_require_dashboard_auth)])

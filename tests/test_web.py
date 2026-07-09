@@ -356,6 +356,23 @@ def test_dashboard_renders_briefs_and_citation_links(db: sessionmaker) -> None:
     assert "근거 없음" in body  # status=empty 항목
 
 
+def test_public_dashboard_renders_read_only_content_without_chat(db: sessionmaker) -> None:
+    _seed_brief(db)
+    resp = client.get(f"/public?date={_BRIEF_DATE.isoformat()}")
+    assert resp.status_code == 200
+    assert resp.headers["x-robots-tag"] == "noindex, nofollow"
+    body = resp.text
+    assert "price_move" in body
+    assert "Bitcoin tops $100K" in body
+    assert 'href="http://news/btc"' in body
+    assert 'href="/public?date=' in body
+    assert 'href="/?date=' not in body
+    assert '<meta name="robots" content="noindex, nofollow"' in body
+    assert '<section class="chat">' not in body
+    assert 'hx-post="/chat"' not in body
+    assert '<button type="submit"' not in body
+
+
 def test_dates_with_briefs_includes_seeded_dates(db: sessionmaker) -> None:
     _seed_brief(db)
     with db() as s:

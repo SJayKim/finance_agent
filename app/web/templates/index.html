@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  {% if public_mode %}<meta name="robots" content="noindex, nofollow" />{% endif %}
   <title>증거 브리프</title>
   <script>
     (function () {
@@ -19,7 +20,7 @@
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;600&family=Noto+Serif+KR:wght@700&display=swap"
   />
   <link rel="stylesheet" href="/static/app.css" />
-  <script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>
+  {% if not public_mode %}<script src="https://unpkg.com/htmx.org@2.0.3" crossorigin="anonymous"></script>{% endif %}
 </head>
 <body>
   <main>
@@ -30,12 +31,12 @@
           {{ brief_date.isoformat() }} (KST){% if last_updated %} · 마지막 업데이트 {{ last_updated.strftime("%Y-%m-%d %H:%M") }}{% endif %}
         </p>
         <nav class="date-chips">
-          <a class="date-arrow" href="/?date={{ prev_date }}" aria-label="이전 날짜">←</a>
+          <a class="date-arrow" href="{{ dashboard_base_path }}?date={{ prev_date }}" aria-label="이전 날짜">←</a>
           {% for c in date_chips %}
           <a class="date-chip{% if c.is_current %} current{% endif %}{% if not c.has_data %} no-data{% endif %}"
-             href="/?date={{ c.iso }}">{{ c.label }}</a>
+             href="{{ dashboard_base_path }}?date={{ c.iso }}">{{ c.label }}</a>
           {% endfor %}
-          <a class="date-arrow" href="/?date={{ next_date }}" aria-label="다음 날짜">→</a>
+          <a class="date-arrow" href="{{ dashboard_base_path }}?date={{ next_date }}" aria-label="다음 날짜">→</a>
         </nav>
       </div>
       <button id="theme-toggle" type="button" aria-label="테마 전환">◐</button>
@@ -62,6 +63,7 @@
       {% endif %}
     </section>
 
+    {% if not public_mode %}
     <section class="chat">
       <h2 class="section-title">근거 기반 질문</h2>
       {% if chat_enabled %}
@@ -80,8 +82,10 @@
       {% endif %}
       <div id="chat-answer"></div>
     </section>
+    {% endif %}
   </main>
 
+  {% if not public_mode %}
   <script>
     // htmx POST /chat의 비-2xx·네트워크 실패가 무음으로 사라지지 않게 에러 문구를 표시.
     (function () {
@@ -102,6 +106,7 @@
       });
     })();
   </script>
+  {% endif %}
   <script>
     // 근거 선택 → 제자리 인라인 드로어로 펼침(페이지 점프 없음). 브리프 본문을 복제해 표시.
     (function () {
