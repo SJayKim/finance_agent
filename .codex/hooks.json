@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-sync python -c \"import runpy; from pathlib import Path; hook = next(p / '.codex/hooks/protect-files.py' for p in (Path.cwd(), *Path.cwd().parents) if (p / '.codex/hooks/protect-files.py').is_file()); runpy.run_path(str(hook), run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

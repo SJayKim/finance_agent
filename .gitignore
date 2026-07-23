@@ -13,7 +13,7 @@ __pycache__/
 
 # 프로바이더 A/B 비교 실험 산출물(scripts.compare_providers --dump-dir) — 결과는 docs/plans/08에 반영됨
 out_compare*/
-out_smoke/
+out_smoke*/**/*.json
 compare_*.log
 
 # 일일 실행 로그(run_daily append 대상) — 디렉터리는 .gitkeep으로 보존, 내용만 제외.
